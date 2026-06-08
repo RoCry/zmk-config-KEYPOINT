@@ -48,7 +48,7 @@ layers:
   - LGUI
   - MUTE
   - LALT
-  - {t: ESCAPE, h: LGUI}
+  - {t: ESC, h: LGUI}
   - {t: SPACE, h: LOWER}
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
