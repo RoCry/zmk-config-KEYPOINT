@@ -48,7 +48,7 @@ layers:
   - LGUI
   - ''
   - LALT
-  - {t: ESC, h: LCMD}
+  - {t: ESC, h: LGUI}
   - {t: SPACE, h: LOWER}
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
@@ -92,6 +92,8 @@ layers:
   - '`'
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
+  - '&bl BL_DEC'
+  - '&bl BL_INC'
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -101,8 +103,6 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - '&bootloader'
   - BT CLR
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -111,7 +111,7 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - '&bootloader'
+  - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   SYMBOL:
@@ -172,7 +172,7 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   FN:
-  - {t: ▽, type: trans}
+  - BT CLR
   - F1
   - F2
   - F3
