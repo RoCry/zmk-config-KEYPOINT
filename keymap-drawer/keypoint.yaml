@@ -47,16 +47,16 @@ layers:
   - LALT
   - LGUI
   - ''
-  - LGUI
-  - {t: ESC, h: LGUI}
+  - LALT
+  - {t: ESC, h: LCMD}
   - {t: SPACE, h: LOWER}
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
   - RALT
+  - ''
   - {t: LEFT, h: LOWER}
   - {t: DOWN, h: SYMBOL}
   - {t: RIGHT, h: FN}
-  - ''
   LOWER:
   - {t: ESC, s: '`'}
   - '1'
@@ -106,7 +106,7 @@ layers:
   - BT CLR
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - {t: MOUSE, type: held}
+  - {t: FN, type: held}
   - BSPC
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -163,67 +163,10 @@ layers:
   - {t: ▽, type: trans}
   - LALT
   - LGUI
-  - MOUSE
+  - FN
   - {t: BSPC, type: held}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  MOUSE:
-  - TAB
-  - Q
-  - W
-  - E
-  - R
-  - T
-  - {t: ▽, type: trans}
-  - '&mkp MB3'
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - BSPC
-  - CAPS
-  - A
-  - S
-  - D
-  - F
-  - G
-  - '&mkp LCLK'
-  - '&mkp LCLK'
-  - ''
-  - '&mkp LCLK'
-  - ''
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - ENTER
-  - LSHFT
-  - Z
-  - X
-  - C
-  - V
-  - B
-  - '&msc SCRL_DOWN'
-  - '&msc SCRL_UP'
-  - ''
-  - ''
-  - {t: ▽, type: trans}
-  - '&mkp RCLK'
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
-  - LCTRL
-  - LALT
-  - LGUI
-  - ''
-  - SYMBOL
-  - SPACE
-  - {t: LOWER, type: held}
-  - LOWER
-  - SPACE
-  - SYMBOL
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -247,11 +190,11 @@ layers:
   - MUTE
   - PLAY
   - ''
-  - {t: ▽, type: trans}
-  - {t: ▽, type: trans}
+  - '&mkp LCLK'
+  - '&mkp RCLK'
   - ''
-  - ''
-  - ''
+  - '&mkp LCLK'
+  - '&mkp MB3'
   - ''
   - ''
   - ''
@@ -261,12 +204,12 @@ layers:
   - F11
   - F12
   - F13
+  - '&msc SCRL_DOWN'
+  - '&msc SCRL_UP'
   - ''
   - ''
   - ''
-  - ''
-  - ''
-  - ''
+  - '&mkp RCLK'
   - ''
   - ''
   - ''
@@ -283,8 +226,8 @@ layers:
   - ''
   - ''
   - ''
-  - {type: held}
   - ''
+  - {type: held}
   RESERVE:
   - ''
   - ''

@@ -15,9 +15,8 @@
 
 #define LOWER 1
 #define SYMBOL 2
-#define MOUSE 3
-#define FN 4
-#define RES 5
+#define FN 3
+#define RES 4
 #define BOT bootloader
 
 / {
@@ -73,7 +72,7 @@
 &kp TAB        &kp Q      &kp W      &kp E      &kp R      &kp T                                                           &kp Y         &kp U      &kp I      &kp O      &kp P         &kp BSPC
 &mt LCTRL ESC  &kp A      &kp S      &kp D      &kp F      &kp G      &kp C_MUTE                 &mkp MB3                    &kp H         &kp J      &kp K      &kp L      &kp BSLH      &kp ENTER
 &kp LSHFT      &kp Z      &kp X      &kp C      &kp V      &kp B      &none       &none           &none       &none         &kp N         &kp M      &kp COMMA  &kp DOT    &lt RES UP     &mt RSHFT FSLH
-&kp LCTRL      &kp LALT   &kp LGUI   &none      &kp LGUI   &mt LGUI ESC &lt LOWER SPACE                                      &lt SYMBOL BSPC &mt RSHFT TAB &kp RALT &lt LOWER LEFT &lt SYMBOL DOWN &lt FN RIGHT &none
+&kp LCTRL      &kp LALT   &kp LGUI   &none      &kp LALT   &mt LCMD ESC &lt LOWER SPACE                                      &lt SYMBOL BSPC &mt RSHFT TAB &kp RALT &none          &lt LOWER LEFT  &lt SYMBOL DOWN &lt FN RIGHT
            >;
            sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
         };
@@ -85,7 +84,7 @@
 &gresc    &kp N1      &kp N2     &kp N3     &kp N4     &kp N5                                                            &kp N6      &kp N7     &kp N8     &kp N9     &kp N0     &kp DEL
 &kp LCTRL &kp N6      &kp N7     &kp N8     &kp N9     &kp N0    &bt BT_CLR                &trans                      &kp LEFT    &kp DOWN   &kp UP     &kp RIGHT  &trans     &trans
 &kp LSHFT &trans     &trans     &trans     &trans     &kp GRAVE &trans     &trans          &trans     &trans           &trans      &trans     &trans     &trans     &trans     &trans
-&trans    &trans     &BOT       &bt BT_CLR &trans     &trans    &mo MOUSE                                  &kp BSPC    &trans     &trans     &trans     &BOT       &trans     &trans
+&trans    &trans     &BOT       &bt BT_CLR &trans     &trans    &mo FN                                     &kp BSPC    &trans     &trans     &trans     &BOT       &trans     &trans
             >;
              sensor-bindings = <&BLE_encoder &scroll_encoder>;
         };
@@ -96,18 +95,7 @@
 &kp ESC   &kp EXCL   &kp AT     &kp HASH    &kp DLLR    &kp PRCNT                                                        &kp CARET   &kp AMPS   &kp STAR    &kp LPAR   &kp RPAR   &trans
 &kp LCTRL &kp MINUS  &kp UNDER  &kp SQT     &kp DQT     &kp BSLH   &kp C_MUTE                 &mkp MB3                    &kp PIPE    &kp LBKT   &kp RBKT    &kp LBRC   &kp RBRC   &trans
 &kp LSHFT &kp EQUAL  &kp PLUS   &kp FSLH    &kp QUESTION &kp GRAVE &trans     &trans          &trans     &trans          &kp TILDE   &kp SEMI   &kp COLON   &trans     &trans     &kp RSHFT
-&trans    &trans     &trans     &trans      &kp LALT    &kp LGUI  &mo MOUSE                                  &kp BSPC    &trans     &trans      &trans     &trans     &trans     &trans
-            >;
-            sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;
-        };
-
-        mouse_layer {
-            display-name = "MOUSE";
-            bindings = <
-&kp TAB   &kp Q     &kp W          &kp E     &kp R      &kp T                                                         &trans      &mkp MB3    &trans  &trans    &trans  &kp BSPC
-&kp CAPS  &kp A     &kp S          &kp D     &kp F      &kp G      &mkp LCLK                         &mkp LCLK        &none       &mkp LCLK   &none   &trans    &trans  &kp ENTER
-&kp LSHFT &kp Z     &kp X          &kp C     &kp V      &kp B      &msc SCRL_DOWN   &msc SCRL_UP     &none  &none     &trans      &mkp RCLK   &trans  &trans    &trans  &trans
-&kp LCTRL &kp LALT  &kp LGUI       &none     &mo SYMBOL &kp SPACE  &mo LOWER                                  &mo LOWER &kp SPACE   &mo SYMBOL  &trans   &trans    &trans  &trans
+&trans    &trans     &trans     &trans      &kp LALT    &kp LGUI  &mo FN                                     &kp BSPC    &trans     &trans      &trans     &trans     &trans     &trans
             >;
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;
         };
@@ -116,8 +104,8 @@
             display-name = "FN";
             bindings = <
 &trans        &kp F1       &kp F2      &kp F3       &kp F4      &kp F5                                                          &kp F6   &kp F7   &kp F8    &kp F9    &kp F10  &trans
-&bt BT_SEL 0  &kp C_VOL_DN &kp C_VOL_UP &kp C_MUTE   &kp C_PLAY  &none     &trans                    &trans                      &none    &none    &none     &none     &none    &none
-&bt BT_SEL 1  &kp F14      &kp F15     &kp F11      &kp F12     &kp F13   &none      &none           &none      &none         &none    &none    &none     &none     &none    &none
+&bt BT_SEL 0  &kp C_VOL_DN &kp C_VOL_UP &kp C_MUTE   &kp C_PLAY  &none     &mkp LCLK                 &mkp RCLK                   &none    &mkp LCLK &mkp MB3  &none     &none    &none
+&bt BT_SEL 1  &kp F14      &kp F15     &kp F11      &kp F12     &kp F13   &msc SCRL_DOWN &msc SCRL_UP &none      &none         &none    &mkp RCLK &none     &none     &none    &none
 &bt BT_SEL 2  &none        &none       &none        &none       &none     &none                                      &none       &none    &none     &none     &none    &none    &none
             >;
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;
