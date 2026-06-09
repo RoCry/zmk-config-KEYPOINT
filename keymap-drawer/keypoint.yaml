@@ -286,6 +286,9 @@ layers:
   - ''
   - ''
 combos:
-- p: [20, 21]
+- p: [21, 22]
+  k: '&cmd_space'
+  l: [QWERTY]
+- p: [15, 16]
   k: '&cmd_space'
   l: [QWERTY]
