@@ -23,8 +23,8 @@ without changing firmware protocol.
 - Chrome: no surrounding frame; draw only a 1 px divider at the bottom of this
   region.
 - Font: `lv_font_unscii_8`, already selected by `lpm_view`.
-- Layout: one optional 16x16 pixel icon on the left and 3 text lines on the
-  right.
+- Layout: 3 full-width text lines, plus one optional compact 8x8 pixel icon
+  below the text and above the divider.
 - Characters per text line: 8 printable ASCII bytes.
 - Empty line is allowed.
 - The `|` separator character is not allowed inside a line.
@@ -105,6 +105,7 @@ Create `scripts/send_keypoint_live_demo.py`:
   - `--address <BLE address or UUID>`
   - `--interval 30`
   - `--source-interval 900`
+  - `--count <n>`
   - `--once`
 - Sends mock frames such as:
   - `KP2|SUN|SUNNY|TMP 24C|12:34`
@@ -112,6 +113,8 @@ Create `scripts/send_keypoint_live_demo.py`:
   - `KP2|CLAUDE|CLAUDE|CODE|12:34`
 - `--interval` controls BLE rebroadcast frequency. `--source-interval`
   controls when the demo source data and `TIME` field change.
+- Demo data intentionally covers all supported icon IDs and several 8-character
+  edge-case text fields for layout validation.
 
 ## Testing
 

@@ -41,7 +41,7 @@ struct layer_status_state {
 };
 
 #define LIVE_DATA_ICON_SIZE 8
-#define LIVE_DATA_ICON_SCALE 2
+#define LIVE_DATA_ICON_SCALE 1
 
 static const char icon_sun[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
     "00100100", "00011000", "10111101", "01111110",
@@ -138,7 +138,7 @@ static void draw_live_data_icon(lv_obj_t *canvas, enum keypoint_live_data_icon i
         break;
     }
 
-    draw_bitmap_icon(canvas, 2, 31, icon_dsc, rows);
+    draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);
 }
 
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
@@ -155,14 +155,10 @@ static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
         live_icon_dsc.bg_opa = LV_OPA_50;
     }
 
-    const bool has_icon = snapshot.icon != KEYPOINT_LIVE_DATA_ICON_NONE;
-    const lv_coord_t text_x = has_icon ? 21 : 3;
-    const lv_coord_t text_width = has_icon ? 49 : 62;
-
     draw_live_data_icon(canvas, snapshot.icon, &live_icon_dsc);
 
     for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, text_x, 25 + (i * 12), text_width, &live_label_dsc,
+        lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67, &live_label_dsc,
                             snapshot.lines[i]);
     }
 

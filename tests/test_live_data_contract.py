@@ -82,6 +82,20 @@ def test_live_data_panel_dims_stale_snapshot() -> None:
     assert ".opa" in panel
 
 
+def test_live_data_icon_does_not_reduce_text_width() -> None:
+    text = STATUS_C.read_text()
+
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel_end = text.index("static void draw_top(", panel_start)
+    panel = text[panel_start:panel_end]
+
+    assert "const bool has_icon" not in panel
+    assert "text_x = has_icon" not in panel
+    assert "lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67" in panel
+    assert "#define LIVE_DATA_ICON_SCALE 1" in text
+    assert "draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);" in text
+
+
 def test_live_data_kp2_icon_contract_is_explicit() -> None:
     header = LIVE_DATA_H.read_text()
     firmware = LIVE_DATA_C.read_text()
@@ -118,7 +132,19 @@ def test_demo_sender_uses_data_time_not_send_time() -> None:
 
     assert "source_interval" in text
     assert "data_time" in text
+    assert "count:" in text
     assert "with_current_time" not in text
+
+
+def test_demo_sender_exercises_diverse_icon_data() -> None:
+    text = SENDER.read_text()
+
+    for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
+        assert f'DemoSource(icon="{icon}"' in text
+
+    assert text.count("DemoSource(") >= 16
+    assert '"MAX8CHAR"' in text
+    assert '"ABCDEFGH"' in text
 
 
 def test_demo_sender_can_resolve_macos_connected_keyboard() -> None:

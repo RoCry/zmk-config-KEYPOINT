@@ -50,15 +50,25 @@ class DemoSource:
 
 
 DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
+    DemoSource(icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH"),
     DemoSource(icon="SUN", line1="SUNNY", line2="TMP 24C"),
+    DemoSource(icon="SUN", line1="UV HI", line2="AQI 42"),
     DemoSource(icon="CLOUD", line1="CLOUDY", line2="HUM 62%"),
+    DemoSource(icon="CLOUD", line1="PM2 035", line2="VIS 8KM"),
     DemoSource(icon="RAIN", line1="RAIN", line2="WIND 3M"),
+    DemoSource(icon="RAIN", line1="RAIN 8MM", line2="WIND 12"),
     DemoSource(icon="TEMP", line1="TEMP", line2="24C"),
+    DemoSource(icon="TEMP", line1="OUT 19C", line2="IN  25C"),
     DemoSource(icon="WARN", line1="WARN", line2="AQI 142"),
+    DemoSource(icon="WARN", line1="LOW BATT", line2="CHG SOON"),
     DemoSource(icon="CODE", line1="BUILD OK", line2="READY"),
+    DemoSource(icon="CODE", line1="CI PASS", line2="22 TESTS"),
     DemoSource(icon="TIME", line1="TIME", line2="LOCAL"),
+    DemoSource(icon="TIME", line1="TZ  UTC8", line2="SYNC OK"),
     DemoSource(icon="CODEX", line1="CODEX", line2="5h 58%"),
+    DemoSource(icon="CODEX", line1="7D 45%", line2="3D 12H"),
     DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE"),
+    DemoSource(icon="CLAUDE", line1="TOK 81%", line2="CTX OK"),
 )
 
 app = typer.Typer(help="Send mock live-data frames to the KEYPOINT left display over BLE.")
@@ -148,6 +158,7 @@ async def send_loop(
     address: str | None,
     interval: float,
     source_interval: float,
+    count: int | None,
     once: bool,
     scan_timeout: float,
 ) -> None:
@@ -155,12 +166,15 @@ async def send_loop(
         raise ValueError("--interval must be greater than 0")
     if source_interval <= 0:
         raise ValueError("--source-interval must be greater than 0")
+    if count is not None and count <= 0:
+        raise ValueError("--count must be greater than 0")
 
     target = await resolve_device(name=name, address=address, timeout=scan_timeout)
     source_iter = cycle(DEFAULT_DEMO_SOURCES)
     source = next(source_iter)
     data_time = datetime.now().strftime("%H:%M")
     next_source_update = monotonic() + source_interval
+    sent_count = 0
 
     async with BleakClient(target, services=[SERVICE_UUID]) as client:
         while True:
@@ -174,8 +188,9 @@ async def send_loop(
 
             await client.write_gatt_char(CHAR_UUID, frame, response=False)
             typer.echo(f"sent {frame.decode('ascii')}")
+            sent_count += 1
 
-            if once:
+            if once or (count is not None and sent_count >= count):
                 return
 
             await asyncio.sleep(interval)
@@ -187,6 +202,7 @@ def main(
     address: str | None = typer.Option(None, help="BLE address/UUID. On macOS this is often a UUID."),
     interval: float = typer.Option(30.0, min=0.1, help="Seconds between mock frames."),
     source_interval: float = typer.Option(900.0, min=0.1, help="Seconds between mock data-source updates."),
+    count: int | None = typer.Option(None, min=1, help="Send this many frames and exit."),
     once: bool = typer.Option(False, help="Send one frame and exit."),
     scan_timeout: float = typer.Option(8.0, min=1.0, help="BLE scan timeout in seconds."),
 ) -> None:
@@ -197,6 +213,7 @@ def main(
                 address=address,
                 interval=interval,
                 source_interval=source_interval,
+                count=count,
                 once=once,
                 scan_timeout=scan_timeout,
             )
