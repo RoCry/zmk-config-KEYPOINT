@@ -13,6 +13,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 #include <math.h>
+#include <zephyr/sys/util.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
 
@@ -84,7 +85,7 @@ static uint32_t last_activity_time = 0;
 static bool scroll_key_pressed = false;
 static bool arrow_key_pressed = false;
 static bool slow_key_pressed = false;
-static bool last_scroll_key_pressed = false; // ★ NEW
+static bool last_scroll_mode_active = false;
 static bool last_arrow_key_pressed = false;
 uint32_t last_packet_time = 0;
 static bool touched = false;
@@ -259,7 +260,8 @@ static void a320_work_cb(struct k_work *work) {
         data->arrow_residue_x = 0;
         data->arrow_residue_y = 0;
 
-        last_scroll_key_pressed = scroll_key_pressed;
+        last_scroll_mode_active =
+            IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
         last_arrow_key_pressed = arrow_key_pressed;
 
         touched = false;
@@ -310,7 +312,9 @@ static void a320_work_cb(struct k_work *work) {
     dy = total_dy;
 
     /* ========= scroll / arrow mode 切换检测 ========= */
-    bool just_enter_scroll = scroll_key_pressed && !last_scroll_key_pressed;
+    bool scroll_mode_active =
+        IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
+    bool just_enter_scroll = scroll_mode_active && !last_scroll_mode_active;
     bool just_enter_arrow = arrow_key_pressed && !last_arrow_key_pressed;
     bool capslock = current_indicators & HID_INDICATORS_CAPS_LOCK;
 
@@ -336,7 +340,7 @@ static void a320_work_cb(struct k_work *work) {
         process_arrow_axis(dev, dx, &data->arrow_residue_x, INPUT_BTN_1, INPUT_BTN_0);
 
         process_arrow_axis(dev, dy, &data->arrow_residue_y, INPUT_BTN_3, INPUT_BTN_2);
-    } else if (scroll_key_pressed || capslock) {
+    } else if (scroll_mode_active || capslock) {
 
         if (just_enter_scroll) {
             data->scroll_residue_x = dx * SCROLL_X_DIR;
@@ -375,7 +379,7 @@ static void a320_work_cb(struct k_work *work) {
         touched = false;
     }
 
-    last_scroll_key_pressed = scroll_key_pressed;
+    last_scroll_mode_active = scroll_mode_active;
     last_arrow_key_pressed = arrow_key_pressed;
     touched = false;
     data->last_packet_time = now;
