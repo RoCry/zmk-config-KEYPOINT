@@ -80,9 +80,16 @@
     combos {
         compatible = "zmk,combos";
 
-        combo_hj_cmd_space {
+        combo_jk_cmd_space {
             timeout-ms = <50>;
-            key-positions = <20 21>;
+            key-positions = <21 22>;
+            layers = <0>;
+            bindings = <&cmd_space>;
+        };
+
+        combo_df_cmd_space {
+            timeout-ms = <50>;
+            key-positions = <15 16>;
             layers = <0>;
             bindings = <&cmd_space>;
         };
@@ -99,7 +106,7 @@
 &kp LSHFT      &kp Z      &kp X      &kp C      &kp V      &kp B      &mkp LCLK   &mkp MB3        &mkp LCLK      &mkp MB3    &kp N         &kp M      &kp COMMA  &kp DOT    &lt RES UP     &mt RSHFT FSLH
 &kp LCTRL      &kp LALT   &kp LGUI   &kp C_MUTE &kp LALT   &mt LGUI ESC &lt LOWER SPACE                                      &lt SYMBOL BSPC &mt RSHFT TAB &mt LC(LA(LS(LGUI))) RALT &kp LC(UP)     &lt LOWER LEFT  &lt SYMBOL DOWN &lt FN RIGHT
            >;
-           sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp F15 F14>;
+           sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp F14 F15>;
         };
 
 

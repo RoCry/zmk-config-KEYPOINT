@@ -60,6 +60,11 @@ EXPECTED_MACROS = {
     "cmd_grave": "bindings = <&macro_press &kp LGUI>, <&macro_tap &kp GRAVE>, <&macro_release &kp LGUI>;",
 }
 
+EXPECTED_COMBOS = {
+    "combo_jk_cmd_space": "key-positions = <21 22>;",
+    "combo_df_cmd_space": "key-positions = <15 16>;",
+}
+
 
 def strip_comments(text: str) -> str:
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
@@ -154,20 +159,21 @@ def main() -> None:
             if expected_bindings not in macro:
                 failures.append(f"{keymap}: macro {macro_name!r} should contain {expected_bindings!r}")
 
-        try:
-            combo = normalize_dts(node_block(text, "combo_hj_cmd_space"))
-        except ValueError:
-            failures.append(f"{keymap}: missing combo_hj_cmd_space")
-            continue
+        for combo_name, key_positions in EXPECTED_COMBOS.items():
+            try:
+                combo = normalize_dts(node_block(text, combo_name))
+            except ValueError:
+                failures.append(f"{keymap}: missing {combo_name}")
+                continue
 
-        for expected in [
-            "timeout-ms = <50>;",
-            "key-positions = <20 21>;",
-            "bindings = <&cmd_space>;",
-            "layers = <0>;",
-        ]:
-            if expected not in combo:
-                failures.append(f"{keymap}: combo_hj_cmd_space should contain {expected!r}")
+            for expected in [
+                "timeout-ms = <50>;",
+                key_positions,
+                "bindings = <&cmd_space>;",
+                "layers = <0>;",
+            ]:
+                if expected not in combo:
+                    failures.append(f"{keymap}: {combo_name} should contain {expected!r}")
 
     if failures:
         raise SystemExit("\n".join(failures))
