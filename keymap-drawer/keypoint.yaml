@@ -103,7 +103,7 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - Bootloader
+  - '&bootloader'
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: FN, type: held}
@@ -167,7 +167,7 @@ layers:
   - {t: BSPC, type: held}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - Bootloader
+  - '&bootloader'
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
