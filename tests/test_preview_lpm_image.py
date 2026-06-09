@@ -73,5 +73,37 @@ def test_generate_previews_creates_expected_keyboard_sized_variants() -> None:
                     assert produced.mode in {"L", "1"}
 
 
+def test_write_firmware_c_array_uses_logical_landscape_lvgl_format() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "portrait.png"
+        output = tmp_path / "sample.c"
+
+        Image.new("RGB", (72, 120), "white").save(source)
+
+        preview.write_firmware_c_array(
+            source,
+            output,
+            symbol="sample",
+            size=(72, 120),
+            logical_size=(120, 72),
+        )
+
+        c_source = output.read_text()
+        assert "LV_ATTRIBUTE_IMG_SAMPLE" in c_source
+        assert (
+            "const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_IMG_SAMPLE uint8_t sample_map[]"
+            in c_source
+        )
+        assert "const lv_img_dsc_t sample" in c_source
+        assert ".header.cf = LV_IMG_CF_INDEXED_1BIT" in c_source
+        assert ".header.w = 120" in c_source
+        assert ".header.h = 72" in c_source
+        assert ".data_size = 1088" in c_source
+
+
 if __name__ == "__main__":
     test_generate_previews_creates_expected_keyboard_sized_variants()
+    test_write_firmware_c_array_uses_logical_landscape_lvgl_format()

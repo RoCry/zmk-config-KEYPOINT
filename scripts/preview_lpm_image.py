@@ -15,6 +15,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 
 DEFAULT_SIZE = (72, 120)
+DEFAULT_LOGICAL_SIZE = (120, 72)
 REMOTE_RE = re.compile(r"^[A-Za-z0-9_.-]+:/")
 
 
@@ -123,6 +124,117 @@ def quantize_gray(image: Image.Image, levels: int, dither: bool) -> Image.Image:
     palette.putpalette(palette_values)
 
     return gray.convert("RGB").quantize(palette=palette, dither=dither_mode).convert("L")
+
+
+def symbol_macro(symbol: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_").upper()
+
+
+def select_named_image(variants: list[tuple[str, Image.Image]], name: str) -> Image.Image:
+    for variant_name, image in variants:
+        if variant_name == name:
+            return image
+    names = ", ".join(variant_name for variant_name, _ in variants)
+    raise ValueError(f"unknown image variant {name!r}; expected one of: {names}")
+
+
+def rotate_for_firmware(image: Image.Image, rotation: str) -> Image.Image:
+    match rotation:
+        case "cw":
+            return image.transpose(Image.Transpose.ROTATE_270)
+        case "ccw":
+            return image.transpose(Image.Transpose.ROTATE_90)
+        case "none":
+            return image.copy()
+        case _:
+            raise ValueError("firmware rotation must be one of: cw, ccw, none")
+
+
+def pack_indexed_1bit(image: Image.Image) -> bytes:
+    bitmap = image.convert("L")
+    stride = (bitmap.width + 7) // 8
+    packed = bytearray()
+
+    for y in range(bitmap.height):
+        for byte_index in range(stride):
+            value = 0
+            for bit in range(8):
+                x = byte_index * 8 + bit
+                if x < bitmap.width and bitmap.getpixel((x, y)) > 127:
+                    value |= 1 << (7 - bit)
+            packed.append(value)
+
+    return bytes(packed)
+
+
+def format_hex_bytes(data: bytes, indent: str = "    ", per_line: int = 16) -> str:
+    lines: list[str] = []
+    for start in range(0, len(data), per_line):
+        chunk = data[start : start + per_line]
+        lines.append(indent + ", ".join(f"0x{value:02x}" for value in chunk) + ",")
+    return "\n".join(lines)
+
+
+def write_firmware_c_array(
+    source: Path,
+    output: Path,
+    *,
+    symbol: str,
+    size: tuple[int, int] = DEFAULT_SIZE,
+    logical_size: tuple[int, int] = DEFAULT_LOGICAL_SIZE,
+    focus: tuple[float, float] = (0.5, 0.38),
+    frame: str = "crop_face",
+    rotation: str = "cw",
+) -> Path:
+    with Image.open(source) as original:
+        frames = framing_variants(original, size=size, focus=focus)
+        portrait = select_named_image(frames, frame)
+
+    dithered = quantize_gray(portrait, levels=2, dither=True).convert("L")
+    logical = rotate_for_firmware(dithered, rotation)
+    if logical.size != logical_size:
+        raise ValueError(
+            f"firmware image became {logical.size[0]}x{logical.size[1]}, expected {logical_size[0]}x{logical_size[1]}"
+        )
+
+    pixel_bytes = pack_indexed_1bit(logical)
+    macro = symbol_macro(symbol)
+    data_size = 8 + len(pixel_bytes)
+    source_text = f"""#include <lvgl.h>
+
+#ifndef LV_ATTRIBUTE_MEM_ALIGN
+#define LV_ATTRIBUTE_MEM_ALIGN
+#endif
+
+#ifndef LV_ATTRIBUTE_IMG_{macro}
+#define LV_ATTRIBUTE_IMG_{macro}
+#endif
+
+const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_IMG_{macro} uint8_t {symbol}_map[] = {{
+#if CONFIG_NICE_VIEW_WIDGET_INVERTED
+    0xff, 0xff, 0xff, 0xff, /*Color of index 0*/
+    0x00, 0x00, 0x00, 0xff, /*Color of index 1*/
+#else
+    0x00, 0x00, 0x00, 0xff, /*Color of index 0*/
+    0xff, 0xff, 0xff, 0xff, /*Color of index 1*/
+#endif
+
+{format_hex_bytes(pixel_bytes)}
+}};
+
+const lv_img_dsc_t {symbol} = {{
+    .header.cf = LV_IMG_CF_INDEXED_1BIT,
+    .header.always_zero = 0,
+    .header.reserved = 0,
+    .header.w = {logical_size[0]},
+    .header.h = {logical_size[1]},
+    .data_size = {data_size},
+    .data = {symbol}_map,
+}};
+"""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(source_text)
+    return output
 
 
 def draw_label(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str) -> None:
@@ -235,9 +347,7 @@ def copy_for_preview(input_path: str, output_dir: Path) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Create keyboard-sized grayscale preview PNGs. Does not write C arrays."
-    )
+    parser = argparse.ArgumentParser(description="Create keyboard-sized grayscale previews and optional LVGL C arrays.")
     parser.add_argument("--input", required=True, help="Local image path or remote form host:/abs/path")
     parser.add_argument(
         "--output-dir",
@@ -275,6 +385,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also write 90/270 degree rotation candidates for display-orientation debugging",
     )
+    parser.add_argument("--firmware-c-out", type=Path, help="Optional output path for a LVGL INDEXED_1BIT C array")
+    parser.add_argument("--firmware-symbol", help="C symbol name for --firmware-c-out, default: --stem/input stem")
+    parser.add_argument(
+        "--firmware-logical-size",
+        type=parse_size,
+        default=DEFAULT_LOGICAL_SIZE,
+        help="Logical LVGL image size for firmware output, default 120x72",
+    )
+    parser.add_argument(
+        "--firmware-frame",
+        default="crop_face",
+        help="Framing variant for firmware output, default crop_face",
+    )
+    parser.add_argument(
+        "--firmware-rotation",
+        choices=["cw", "ccw", "none"],
+        default="cw",
+        help="Rotate portrait preview into firmware logical image, default cw",
+    )
     return parser.parse_args()
 
 
@@ -295,6 +424,20 @@ def main() -> None:
         contact_scale=args.contact_scale,
         include_rotations=args.include_rotations,
     )
+    if args.firmware_c_out is not None:
+        symbol = args.firmware_symbol or stem
+        written.append(
+            write_firmware_c_array(
+                source,
+                args.firmware_c_out.expanduser(),
+                symbol=symbol,
+                size=args.size,
+                logical_size=args.firmware_logical_size,
+                focus=(args.focus_x, args.focus_y),
+                frame=args.firmware_frame,
+                rotation=args.firmware_rotation,
+            )
+        )
 
     for path in written:
         print(path)
