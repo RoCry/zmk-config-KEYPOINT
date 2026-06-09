@@ -57,6 +57,30 @@ def test_status_uses_live_data_instead_of_wpm_chart() -> None:
     assert "select ZMK_WPM" not in kconfig
 
 
+def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
+    text = STATUS_C.read_text()
+
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel_end = text.index("static void draw_top(", panel_start)
+    panel = text[panel_start:panel_end]
+
+    assert "lv_canvas_draw_rect(" not in panel
+    assert "lv_canvas_draw_line(" in panel
+    assert "init_line_dsc(" in text
+
+
+def test_live_data_panel_dims_stale_snapshot() -> None:
+    text = STATUS_C.read_text()
+
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel_end = text.index("static void draw_top(", panel_start)
+    panel = text[panel_start:panel_end]
+
+    assert "snapshot.stale" in panel
+    assert "LV_OPA_50" in panel
+    assert ".opa" in panel
+
+
 def test_demo_sender_uses_same_limits() -> None:
     text = SENDER.read_text()
 

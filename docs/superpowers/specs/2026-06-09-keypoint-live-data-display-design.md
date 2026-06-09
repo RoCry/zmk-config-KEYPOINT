@@ -20,6 +20,8 @@ without changing firmware protocol.
 
 - Area: existing WPM panel in `widgets/status.c`, logical canvas region
   approximately `x=0..70`, `y=21..65`.
+- Chrome: no surrounding frame; draw only a 1 px divider at the bottom of this
+  region.
 - Font: `lv_font_unscii_8`, already selected by `lpm_view`.
 - Lines: 4.
 - Characters per line: 8 printable ASCII bytes.
@@ -36,6 +38,9 @@ without changing firmware protocol.
   - previous line 1
   - previous line 2
   - previous line 3
+- Stale state also draws the live-data text and bottom divider at reduced
+  opacity (`LV_OPA_50`). The `STALE` text remains as a reliable fallback for
+  monochrome or low-contrast display paths.
 
 ## Payload Contract
 

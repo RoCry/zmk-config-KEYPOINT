@@ -41,16 +41,22 @@ struct layer_status_state {
 };
 
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
-                                 const lv_draw_rect_dsc_t *rect_black_dsc,
-                                 const lv_draw_rect_dsc_t *rect_white_dsc) {
-    lv_canvas_draw_rect(canvas, 0, 21, 70, 44, rect_white_dsc);
-    lv_canvas_draw_rect(canvas, 1, 22, 66, 42, rect_black_dsc);
-
+                                 const lv_draw_line_dsc_t *divider_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
+    lv_draw_label_dsc_t live_label_dsc = *label_dsc;
+    lv_draw_line_dsc_t live_divider_dsc = *divider_dsc;
+
+    if (snapshot.stale) {
+        live_label_dsc.opa = LV_OPA_50;
+        live_divider_dsc.opa = LV_OPA_50;
+    }
 
     for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, 3, 24 + (i * 10), 62, label_dsc, snapshot.lines[i]);
+        lv_canvas_draw_text(canvas, 3, 24 + (i * 10), 62, &live_label_dsc, snapshot.lines[i]);
     }
+
+    lv_point_t divider_points[] = {{0, 65}, {70, 65}};
+    lv_canvas_draw_line(canvas, divider_points, 2, &live_divider_dsc);
 }
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -62,8 +68,8 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_label_dsc(&label_dsc_wpm, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_RIGHT);
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-    lv_draw_rect_dsc_t rect_white_dsc;
-    init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
+    lv_draw_line_dsc_t line_dsc;
+    init_line_dsc(&line_dsc, LVGL_FOREGROUND, 1);
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
@@ -93,7 +99,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, output_text);
 
-    draw_live_data_panel(canvas, &label_dsc_wpm, &rect_black_dsc, &rect_white_dsc);
+    draw_live_data_panel(canvas, &label_dsc_wpm, &line_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
