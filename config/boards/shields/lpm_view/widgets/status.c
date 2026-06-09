@@ -81,8 +81,8 @@ static const char icon_time[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
 };
 
 static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "10000001", "01000010", "00100100", "00011000",
-    "00011000", "00100100", "01000010", "10000001",
+    "00111100", "01011010", "10100101", "10111101",
+    "10111101", "10100101", "01011010", "00111100",
 };
 
 static const char icon_claude[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {

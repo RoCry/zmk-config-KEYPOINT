@@ -172,6 +172,25 @@ def test_live_data_kp2_icon_contract_is_explicit() -> None:
     assert "draw_bitmap_icon(" in status
 
 
+def test_codex_icon_uses_openai_mark_inspired_bitmap() -> None:
+    status = STATUS_C.read_text()
+
+    assert (
+        "static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {\n"
+        '    "00111100", "01011010", "10100101", "10111101",\n'
+        '    "10111101", "10100101", "01011010", "00111100",\n'
+        "};"
+    ) in status
+
+    old_x_bitmap = (
+        "static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {\n"
+        '    "10000001", "01000010", "00100100", "00011000",\n'
+        '    "00011000", "00100100", "01000010", "10000001",\n'
+        "};"
+    )
+    assert old_x_bitmap not in status
+
+
 def test_live_data_stale_keeps_last_payload_text() -> None:
     text = LIVE_DATA_C.read_text()
 
