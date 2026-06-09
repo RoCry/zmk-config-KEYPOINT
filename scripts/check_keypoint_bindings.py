@@ -12,6 +12,7 @@ KEYMAPS = [
     ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint.keymap",
     ROOT / "config/keypoint.keymap",
 ]
+LEFT_DTS = ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_left.dts"
 
 BINDING_CELLS = {
     "&bl": 1,
@@ -32,6 +33,7 @@ BINDING_CELLS = {
 EXPECTED_DEFAULT_BINDINGS = {
     18: "&mkp LCLK",  # left pointing-device click key
     19: "&mkp LCLK",  # right pointing-device click key
+    40: "&kp UP",  # reserve layer removed; right key is plain Up
     45: "&kp C_MUTE",  # left encoder press
     47: "&mt LGUI ESC",  # left thumb: hold Command, tap Escape
     51: "&mt LC(LA(LS(LGUI))) RALT",  # right Alt: hold Hyper, tap right Alt
@@ -63,6 +65,11 @@ EXPECTED_MACROS = {
 EXPECTED_COMBOS = {
     "combo_jk_cmd_space": "key-positions = <21 22>;",
     "combo_df_cmd_space": "key-positions = <15 16>;",
+}
+
+EXPECTED_POINTING_BINDINGS = {
+    49: "&mkp LCLK",  # right thumb BSPC position becomes left click while pointing
+    50: "&mkp RCLK",  # right thumb TAB position becomes right click while pointing
 }
 
 
@@ -122,8 +129,23 @@ def layer_bindings(text: str, layer_name: str) -> list[str]:
 def main() -> None:
     failures: list[str] = []
 
+    left_dts_text = LEFT_DTS.read_text()
+    normalized_left_dts = normalize_dts(left_dts_text)
+    for expected in [
+        "#define TRACKPOINT_POINTING_LAYER 4",
+        "#define TRACKPOINT_POINTING_TIMEOUT_MS 1500",
+        "<&zip_temp_layer TRACKPOINT_POINTING_LAYER TRACKPOINT_POINTING_TIMEOUT_MS>",
+    ]:
+        if expected not in normalized_left_dts:
+            failures.append(f"{LEFT_DTS}: missing TrackPoint pointing-layer wiring {expected!r}")
+
     for keymap in KEYMAPS:
         text = keymap.read_text()
+
+        normalized_text = normalize_dts(text)
+        for removed in ["#define RES", "RES_layer", 'display-name = "RESERVE";', "&lt RES UP"]:
+            if removed in normalized_text:
+                failures.append(f"{keymap}: removed reserve-layer marker still present: {removed!r}")
 
         default_bindings = layer_bindings(text, "default_layer")
         if len(default_bindings) != 56:
@@ -144,6 +166,21 @@ def main() -> None:
             actual = lower_bindings[index]
             if actual != expected:
                 failures.append(f"{keymap}: lower_layer[{index}] is {actual!r}, expected {expected!r}")
+
+        try:
+            pointing_bindings = layer_bindings(text, "pointing_layer")
+        except ValueError:
+            failures.append(f"{keymap}: missing pointing_layer")
+            continue
+
+        if len(pointing_bindings) != 56:
+            failures.append(f"{keymap}: pointing_layer has {len(pointing_bindings)} bindings, expected 56")
+            continue
+
+        for index, expected in EXPECTED_POINTING_BINDINGS.items():
+            actual = pointing_bindings[index]
+            if actual != expected:
+                failures.append(f"{keymap}: pointing_layer[{index}] is {actual!r}, expected {expected!r}")
 
         for macro_name, expected_bindings in EXPECTED_MACROS.items():
             try:

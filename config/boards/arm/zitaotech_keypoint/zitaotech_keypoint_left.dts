@@ -9,6 +9,9 @@
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <dt-bindings/zmk/keys.h>
 
+#define TRACKPOINT_POINTING_LAYER 4
+#define TRACKPOINT_POINTING_TIMEOUT_MS 1500
+
 / {
     input_processors {
 
@@ -202,6 +205,7 @@
 &trackpoint_listener {
     status = "okay";
     input-processors =
+        <&zip_temp_layer TRACKPOINT_POINTING_LAYER TRACKPOINT_POINTING_TIMEOUT_MS>,
         <&ip_behaviors0>,
         <&ip_behaviors1>,
         <&ip_behaviors2>,
