@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LPM_VIEW = ROOT / "config/boards/shields/lpm_view"
 
+DISABLED_PERIPHERAL_IMAGES = ("cat", "mounta", "plane", "vader")
+
 
 def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
     asset = LPM_VIEW / "widgets/picture/al_pacino.c"
@@ -30,5 +32,20 @@ def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
     assert ".data_size = 1088" in source
 
 
+def test_disabled_images_are_not_wired_into_peripheral_firmware() -> None:
+    cmake = (LPM_VIEW / "CMakeLists.txt").read_text()
+    status = (LPM_VIEW / "widgets/peripheral_status.c").read_text()
+
+    assert "widgets/art.c" not in cmake
+    assert "widgets/landspace/landspace1.c" not in cmake
+    assert "widgets/bunnygirl_anima/ballon.c" not in cmake
+
+    for image in DISABLED_PERIPHERAL_IMAGES:
+        assert f"widgets/picture/{image}.c" not in cmake
+        assert f"LV_IMG_DECLARE({image});" not in status
+        assert f"&{image}" not in status
+
+
 if __name__ == "__main__":
     test_al_pacino_asset_is_wired_into_peripheral_firmware()
+    test_disabled_images_are_not_wired_into_peripheral_firmware()

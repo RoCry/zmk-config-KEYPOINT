@@ -22,14 +22,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include "peripheral_status.h"
 
 // ==================== 图片声明 ====================
-LV_IMG_DECLARE(cat);
 LV_IMG_DECLARE(astronaut);
 LV_IMG_DECLARE(macintosch);
 LV_IMG_DECLARE(david);
-LV_IMG_DECLARE(vader);
 LV_IMG_DECLARE(blackhole);
-LV_IMG_DECLARE(plane);
-LV_IMG_DECLARE(mounta);
 LV_IMG_DECLARE(al_pacino);
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
@@ -41,8 +37,7 @@ struct peripheral_status_state {
 
 // ==================== 图片数组 ====================
 static const lv_img_dsc_t *bunny_frames[] = {
-    &cat,       &astronaut, &macintosch, &david, &vader,
-    &blackhole, &plane,     &mounta,     &al_pacino,
+    &astronaut, &macintosch, &david, &blackhole, &al_pacino,
 };
 
 #define BUNNY_FRAME_COUNT (sizeof(bunny_frames) / sizeof(bunny_frames[0]))

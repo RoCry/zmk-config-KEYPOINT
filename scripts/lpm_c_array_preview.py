@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 HEX_BYTE_RE = re.compile(r"0x([0-9a-fA-F]{2})")
 
@@ -65,11 +65,13 @@ def decode_c_array_preview(source: Path) -> Image.Image:
     return _unpack_indexed_1bit(_extract_lvgl_bitmap_bytes(c_source, width, height), width, height)
 
 
-def write_c_array_preview(source: Path, output: Path, *, scale: int = 4) -> Path:
+def write_c_array_preview(source: Path, output: Path, *, scale: int = 4, invert: bool = True) -> Path:
     if scale <= 0:
         raise ValueError("scale must be positive")
 
     image = decode_c_array_preview(source)
+    if invert:
+        image = ImageOps.invert(image)
     if scale > 1:
         image = image.resize((image.width * scale, image.height * scale), resample=Image.Resampling.NEAREST)
 

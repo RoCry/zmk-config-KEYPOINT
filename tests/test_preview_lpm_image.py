@@ -16,6 +16,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "preview_lpm_image.py"
+BATCH_SCRIPT = ROOT / "scripts" / "preview_all_lpm_c_arrays.py"
 
 
 def load_module():
@@ -189,7 +190,7 @@ def test_write_firmware_c_array_can_invert_packed_bitmap_pixels() -> None:
         assert inverted_pixels == all_pixels - normal_pixels
 
 
-def test_write_c_array_preview_reconstructs_firmware_bitmap() -> None:
+def test_write_c_array_preview_inverts_firmware_bitmap_for_human_viewing() -> None:
     preview = load_module()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -215,6 +216,36 @@ def test_write_c_array_preview_reconstructs_firmware_bitmap() -> None:
         with Image.open(preview_output) as produced:
             assert produced.size == (3, 2)
             assert produced.mode == "L"
+            assert produced.getpixel((0, 1)) == 0
+            assert produced.getpixel((0, 0)) == 255
+            assert produced.getpixel((1, 1)) == 255
+
+
+def test_write_c_array_preview_can_show_raw_bitmap_bits() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "marker.png"
+        c_output = tmp_path / "sample.c"
+        preview_output = tmp_path / "sample_from_c_raw.png"
+
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(source)
+
+        preview.write_firmware_c_array(
+            source,
+            c_output,
+            symbol="sample",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+
+        preview.write_c_array_preview(c_output, preview_output, scale=1, invert=False)
+
+        with Image.open(preview_output) as produced:
+            assert produced.size == (3, 2)
             assert produced.getpixel((0, 1)) == 255
             assert produced.getpixel((0, 0)) == 0
             assert produced.getpixel((1, 1)) == 0
@@ -259,8 +290,66 @@ def test_c_input_cli_writes_scaled_human_preview() -> None:
         assert str(preview_output) in result.stdout
         with Image.open(preview_output) as produced:
             assert produced.size == (12, 8)
-            assert produced.getpixel((0, 4)) == 255
-            assert produced.getpixel((0, 0)) == 0
+            assert produced.getpixel((0, 4)) == 0
+            assert produced.getpixel((0, 0)) == 255
+
+
+def test_preview_all_lpm_c_arrays_cli_scans_c_arrays_only() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        input_root = tmp_path / "widgets"
+        output_dir = tmp_path / "previews"
+        input_root.mkdir()
+
+        marker = tmp_path / "marker.png"
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(marker)
+
+        preview.write_firmware_c_array(
+            marker,
+            input_root / "first.c",
+            symbol="first",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+        preview.write_firmware_c_array(
+            marker,
+            input_root / "nested" / "second.c",
+            symbol="second",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+        (input_root / "not_image.c").write_text("int main(void) { return 0; }\n")
+
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                str(BATCH_SCRIPT),
+                "--input-root",
+                str(input_root),
+                "--output-dir",
+                str(output_dir),
+                "--scale",
+                "2",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+
+        written = sorted(output_dir.glob("*_from_c_x2.png"))
+        assert [path.name for path in written] == ["first_from_c_x2.png", "second_from_c_x2.png"]
+        assert "2 preview(s)" in result.stdout
+        for path in written:
+            with Image.open(path) as produced:
+                assert produced.size == (6, 4)
+                assert produced.getpixel((0, 2)) == 0
+                assert produced.getpixel((0, 0)) == 255
 
 
 if __name__ == "__main__":
@@ -268,5 +357,7 @@ if __name__ == "__main__":
     test_write_firmware_c_array_uses_logical_landscape_lvgl_format()
     test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets()
     test_write_firmware_c_array_can_invert_packed_bitmap_pixels()
-    test_write_c_array_preview_reconstructs_firmware_bitmap()
+    test_write_c_array_preview_inverts_firmware_bitmap_for_human_viewing()
+    test_write_c_array_preview_can_show_raw_bitmap_bits()
     test_c_input_cli_writes_scaled_human_preview()
+    test_preview_all_lpm_c_arrays_cli_scans_c_arrays_only()

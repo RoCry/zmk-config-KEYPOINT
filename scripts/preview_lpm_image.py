@@ -429,6 +429,11 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="Nearest-neighbor scale for --c-input preview, default 4",
     )
+    parser.add_argument(
+        "--c-preview-raw-bits",
+        action="store_true",
+        help="Do not invert --c-input pixels; show stored bitmap bits directly",
+    )
     return parser.parse_args()
 
 
@@ -437,7 +442,14 @@ def main() -> None:
     if args.c_input is not None:
         if args.c_preview_out is None:
             raise SystemExit("--c-preview-out is required with --c-input")
-        print(write_c_array_preview(args.c_input, args.c_preview_out, scale=args.c_preview_scale))
+        print(
+            write_c_array_preview(
+                args.c_input,
+                args.c_preview_out,
+                scale=args.c_preview_scale,
+                invert=not args.c_preview_raw_bits,
+            )
+        )
         return
 
     if not (0.0 <= args.focus_x <= 1.0 and 0.0 <= args.focus_y <= 1.0):
