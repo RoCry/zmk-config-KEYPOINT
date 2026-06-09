@@ -33,10 +33,10 @@ layers:
   - C
   - V
   - B
-  - PG DN
-  - PG UP
-  - '&msc SCRL_DOWN'
-  - '&msc SCRL_UP'
+  - '&mkp LCLK'
+  - '&mkp MB3'
+  - '&mkp LCLK'
+  - '&mkp MB3'
   - N
   - M
   - ','
@@ -53,7 +53,7 @@ layers:
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
   - {t: RALT, h: Meh+LGUI}
-  - ''
+  - Ctl+UP
   - {t: LEFT, h: LOWER}
   - {t: DOWN, h: SYMBOL}
   - {t: RIGHT, h: FN}
