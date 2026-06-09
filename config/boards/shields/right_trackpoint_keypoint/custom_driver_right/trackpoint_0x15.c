@@ -302,7 +302,6 @@ static void trackpoint_work_cb(struct k_work *work) {
     /* ========= scroll mode detect ========= */
     bool just_enter_scroll = scroll_key_pressed && !last_scroll_key_pressed;
     bool just_enter_arrow = arrow_key_pressed && !last_arrow_key_pressed;
-    bool capslock = current_indicators & HID_INDICATORS_CAPS_LOCK;
 
     if (arrow_key_pressed) {
 

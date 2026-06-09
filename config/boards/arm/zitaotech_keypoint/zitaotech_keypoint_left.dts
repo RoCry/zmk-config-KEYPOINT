@@ -45,6 +45,16 @@
             codes = <INPUT_BTN_3>;
             bindings = <&kp UP>;
         };
+
+        trackpoint_scroll_mapper: trackpoint_scroll_mapper {
+            compatible = "zmk,input-processor-code-mapper";
+            #input-processor-cells = <0>;
+            type = <INPUT_EV_REL>;
+            map
+                = <INPUT_REL_Y INPUT_REL_WHEEL>
+                , <INPUT_REL_X INPUT_REL_HWHEEL>
+                ;
+        };
     };
 };
 
@@ -196,6 +206,12 @@
         <&ip_behaviors1>,
         <&ip_behaviors2>,
         <&ip_behaviors3>;
+
+    trackpoint_layer_1_scroll {
+        layers = <1>;
+        process-next;
+        input-processors = <&trackpoint_scroll_mapper>;
+    };
 };
 
 /*&trackpoint_listener {
