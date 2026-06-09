@@ -28,6 +28,8 @@ DEFAULT_DEMO_FRAMES: tuple[tuple[str, str, str, str], ...] = (
     ("SUNNY", "TMP 24C", "AQI 42", "12:34"),
     ("CLOUDY", "TMP 19C", "HUM 62%", "12:35"),
     ("RAIN", "TMP 17C", "WIND 3M", "12:36"),
+    ("CLAUDE", "5h 58%", "7d 45%", "3d 12h"),
+    ("CODEX", "5h 58%", "7d 45%", "3d 12h"),
 )
 
 app = typer.Typer(help="Send mock live-data frames to the KEYPOINT left display over BLE.")
