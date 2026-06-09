@@ -10,7 +10,7 @@
 #include <dt-bindings/zmk/keys.h>
 
 #define TRACKPOINT_POINTING_LAYER 4
-#define TRACKPOINT_POINTING_TIMEOUT_MS 1500
+#define TRACKPOINT_POINTING_TIMEOUT_MS 700
 
 / {
     input_processors {

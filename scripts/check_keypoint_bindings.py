@@ -8,11 +8,14 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PRIMARY_KEYMAP = ROOT / "config/keypoint.keymap"
+BOARD_KEYMAP = ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint.keymap"
 KEYMAPS = [
-    ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint.keymap",
-    ROOT / "config/keypoint.keymap",
+    BOARD_KEYMAP,
+    PRIMARY_KEYMAP,
 ]
 LEFT_DTS = ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_left.dts"
+BOARD_KEYMAP_INCLUDE = '#include "../../../keypoint.keymap"'
 
 BINDING_CELLS = {
     "&bl": 1,
@@ -55,6 +58,7 @@ EXPECTED_LOWER_BINDINGS = {
     29: "&kp N9",
     30: "&kp N0",
     31: "&cmd_grave",  # Cmd+` window switch macro
+    45: "&trans",  # BT_CLR belongs on FN only
 }
 
 EXPECTED_MACROS = {
@@ -80,6 +84,22 @@ def strip_comments(text: str) -> str:
 
 def normalize_dts(text: str) -> str:
     return re.sub(r"\s+", " ", strip_comments(text)).strip()
+
+
+def read_keymap_text(path: Path, seen: set[Path] | None = None) -> str:
+    seen = set() if seen is None else seen
+    path = path.resolve()
+    if path in seen:
+        raise AssertionError(f"recursive include while reading {path}")
+    seen.add(path)
+
+    text = path.read_text()
+
+    def expand_include(match: re.Match[str]) -> str:
+        include_path = path.parent / match.group(1)
+        return read_keymap_text(include_path, seen)
+
+    return re.sub(r'#include\s+"([^"]+)"', expand_include, text)
 
 
 def node_block(text: str, marker: str) -> str:
@@ -129,18 +149,26 @@ def layer_bindings(text: str, layer_name: str) -> list[str]:
 def main() -> None:
     failures: list[str] = []
 
+    board_keymap_text = BOARD_KEYMAP.read_text()
+    if BOARD_KEYMAP_INCLUDE not in board_keymap_text:
+        failures.append(f"{BOARD_KEYMAP}: should include the primary keymap with {BOARD_KEYMAP_INCLUDE!r}")
+    if 'compatible = "zmk,keymap";' in strip_comments(board_keymap_text):
+        failures.append(
+            f"{BOARD_KEYMAP}: should not duplicate keymap bindings; keep {PRIMARY_KEYMAP} as source of truth"
+        )
+
     left_dts_text = LEFT_DTS.read_text()
     normalized_left_dts = normalize_dts(left_dts_text)
     for expected in [
         "#define TRACKPOINT_POINTING_LAYER 4",
-        "#define TRACKPOINT_POINTING_TIMEOUT_MS 1500",
+        "#define TRACKPOINT_POINTING_TIMEOUT_MS 700",
         "<&zip_temp_layer TRACKPOINT_POINTING_LAYER TRACKPOINT_POINTING_TIMEOUT_MS>",
     ]:
         if expected not in normalized_left_dts:
             failures.append(f"{LEFT_DTS}: missing TrackPoint pointing-layer wiring {expected!r}")
 
     for keymap in KEYMAPS:
-        text = keymap.read_text()
+        text = read_keymap_text(keymap)
 
         normalized_text = normalize_dts(text)
         for removed in ["#define RES", "RES_layer", 'display-name = "RESERVE";', "&lt RES UP"]:
@@ -161,6 +189,8 @@ def main() -> None:
         if len(lower_bindings) != 56:
             failures.append(f"{keymap}: lower_layer has {len(lower_bindings)} bindings, expected 56")
             continue
+        if "&bt BT_CLR" in lower_bindings:
+            failures.append(f"{keymap}: lower_layer should not contain BT_CLR")
 
         for index, expected in EXPECTED_LOWER_BINDINGS.items():
             actual = lower_bindings[index]
