@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -188,8 +189,84 @@ def test_write_firmware_c_array_can_invert_packed_bitmap_pixels() -> None:
         assert inverted_pixels == all_pixels - normal_pixels
 
 
+def test_write_c_array_preview_reconstructs_firmware_bitmap() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "marker.png"
+        c_output = tmp_path / "sample.c"
+        preview_output = tmp_path / "sample_from_c.png"
+
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(source)
+
+        preview.write_firmware_c_array(
+            source,
+            c_output,
+            symbol="sample",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+
+        preview.write_c_array_preview(c_output, preview_output, scale=1)
+
+        with Image.open(preview_output) as produced:
+            assert produced.size == (3, 2)
+            assert produced.mode == "L"
+            assert produced.getpixel((0, 1)) == 255
+            assert produced.getpixel((0, 0)) == 0
+            assert produced.getpixel((1, 1)) == 0
+
+
+def test_c_input_cli_writes_scaled_human_preview() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "marker.png"
+        c_output = tmp_path / "sample.c"
+        preview_output = tmp_path / "sample_from_c_x4.png"
+
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(source)
+        preview.write_firmware_c_array(
+            source,
+            c_output,
+            symbol="sample",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                str(SCRIPT),
+                "--c-input",
+                str(c_output),
+                "--c-preview-out",
+                str(preview_output),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+        )
+
+        assert str(preview_output) in result.stdout
+        with Image.open(preview_output) as produced:
+            assert produced.size == (12, 8)
+            assert produced.getpixel((0, 4)) == 255
+            assert produced.getpixel((0, 0)) == 0
+
+
 if __name__ == "__main__":
     test_generate_previews_creates_expected_keyboard_sized_variants()
     test_write_firmware_c_array_uses_logical_landscape_lvgl_format()
     test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets()
     test_write_firmware_c_array_can_invert_packed_bitmap_pixels()
+    test_write_c_array_preview_reconstructs_firmware_bitmap()
+    test_c_input_cli_writes_scaled_human_preview()

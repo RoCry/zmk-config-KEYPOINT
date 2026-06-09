@@ -10,9 +10,16 @@ import argparse
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageOps
+
+try:
+    from lpm_c_array_preview import write_c_array_preview
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from lpm_c_array_preview import write_c_array_preview
 
 DEFAULT_SIZE = (72, 120)
 DEFAULT_LOGICAL_SIZE = (120, 72)
@@ -352,7 +359,9 @@ def copy_for_preview(input_path: str, output_dir: Path) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create keyboard-sized grayscale previews and optional LVGL C arrays.")
-    parser.add_argument("--input", required=True, help="Local image path or remote form host:/abs/path")
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument("--input", help="Local image path or remote form host:/abs/path")
+    input_group.add_argument("--c-input", type=Path, help="Existing LVGL INDEXED_1BIT C array to decode into a PNG")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -413,11 +422,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Invert packed 1-bit firmware pixels before writing the C array",
     )
+    parser.add_argument("--c-preview-out", type=Path, help="Output PNG path for --c-input")
+    parser.add_argument(
+        "--c-preview-scale",
+        type=int,
+        default=4,
+        help="Nearest-neighbor scale for --c-input preview, default 4",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.c_input is not None:
+        if args.c_preview_out is None:
+            raise SystemExit("--c-preview-out is required with --c-input")
+        print(write_c_array_preview(args.c_input, args.c_preview_out, scale=args.c_preview_scale))
+        return
+
     if not (0.0 <= args.focus_x <= 1.0 and 0.0 <= args.focus_y <= 1.0):
         raise SystemExit("--focus-x and --focus-y must be between 0.0 and 1.0")
 
