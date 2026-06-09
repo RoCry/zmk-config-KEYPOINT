@@ -40,19 +40,130 @@ struct layer_status_state {
     const char *label;
 };
 
+#define LIVE_DATA_ICON_SIZE 8
+#define LIVE_DATA_ICON_SCALE 2
+
+static const char icon_sun[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00100100", "00011000", "10111101", "01111110",
+    "01111110", "10111101", "00011000", "00100100",
+};
+
+static const char icon_cloud[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00000000", "00111000", "01111100", "11111110",
+    "11111110", "01111100", "00000000", "00000000",
+};
+
+static const char icon_rain[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00111000", "01111100", "11111110", "01111100",
+    "00000000", "01001000", "10010000", "00100100",
+};
+
+static const char icon_temp[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00110000", "01001000", "01001000", "01001000",
+    "01001000", "10000100", "10000100", "01111000",
+};
+
+static const char icon_warn[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00010000", "00111000", "00111000", "01101100",
+    "01101100", "11111110", "11101110", "11111110",
+};
+
+static const char icon_code[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "10000010", "01000100", "00101000", "00010000",
+    "00101000", "01000100", "10000010", "00010000",
+};
+
+static const char icon_time[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00111100", "01000010", "10010001", "10010001",
+    "10011101", "10000001", "01000010", "00111100",
+};
+
+static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "10000001", "01000010", "00100100", "00011000",
+    "00011000", "00100100", "01000010", "10000001",
+};
+
+static const char icon_claude[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
+    "00010000", "00010000", "01010100", "00111000",
+    "11111110", "00111000", "01010100", "00010000",
+};
+
+static void draw_bitmap_icon(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
+                             const lv_draw_rect_dsc_t *icon_dsc,
+                             const char rows[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1]) {
+    for (int row = 0; row < LIVE_DATA_ICON_SIZE; row++) {
+        for (int column = 0; column < LIVE_DATA_ICON_SIZE; column++) {
+            if (rows[row][column] == '1') {
+                lv_canvas_draw_rect(canvas, x + (column * LIVE_DATA_ICON_SCALE),
+                                    y + (row * LIVE_DATA_ICON_SCALE), LIVE_DATA_ICON_SCALE,
+                                    LIVE_DATA_ICON_SCALE, icon_dsc);
+            }
+        }
+    }
+}
+
+static void draw_live_data_icon(lv_obj_t *canvas, enum keypoint_live_data_icon icon,
+                                const lv_draw_rect_dsc_t *icon_dsc) {
+    const char(*rows)[LIVE_DATA_ICON_SIZE + 1] = NULL;
+
+    switch (icon) {
+    case KEYPOINT_LIVE_DATA_ICON_NONE:
+        return;
+    case KEYPOINT_LIVE_DATA_ICON_SUN:
+        rows = icon_sun;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_CLOUD:
+        rows = icon_cloud;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_RAIN:
+        rows = icon_rain;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_TEMP:
+        rows = icon_temp;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_WARN:
+        rows = icon_warn;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_CODE:
+        rows = icon_code;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_TIME:
+        rows = icon_time;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_CODEX:
+        rows = icon_codex;
+        break;
+    case KEYPOINT_LIVE_DATA_ICON_CLAUDE:
+        rows = icon_claude;
+        break;
+    }
+
+    draw_bitmap_icon(canvas, 2, 31, icon_dsc, rows);
+}
+
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
-                                 const lv_draw_line_dsc_t *divider_dsc) {
+                                 const lv_draw_line_dsc_t *divider_dsc,
+                                 const lv_draw_rect_dsc_t *icon_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
     lv_draw_label_dsc_t live_label_dsc = *label_dsc;
     lv_draw_line_dsc_t live_divider_dsc = *divider_dsc;
+    lv_draw_rect_dsc_t live_icon_dsc = *icon_dsc;
 
     if (snapshot.stale) {
         live_label_dsc.opa = LV_OPA_50;
         live_divider_dsc.opa = LV_OPA_50;
+        live_icon_dsc.bg_opa = LV_OPA_50;
     }
 
-    for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, 3, 24 + (i * 10), 62, &live_label_dsc, snapshot.lines[i]);
+    const bool has_icon = snapshot.icon != KEYPOINT_LIVE_DATA_ICON_NONE;
+    const lv_coord_t text_x = has_icon ? 21 : 3;
+    const lv_coord_t text_width = has_icon ? 49 : 62;
+
+    draw_live_data_icon(canvas, snapshot.icon, &live_icon_dsc);
+
+    for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
+        lv_canvas_draw_text(canvas, text_x, 25 + (i * 12), text_width, &live_label_dsc,
+                            snapshot.lines[i]);
     }
 
     lv_point_t divider_points[] = {{0, 65}, {70, 65}};
@@ -70,6 +181,8 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     lv_draw_line_dsc_t line_dsc;
     init_line_dsc(&line_dsc, LVGL_FOREGROUND, 1);
+    lv_draw_rect_dsc_t icon_dsc;
+    init_rect_dsc(&icon_dsc, LVGL_FOREGROUND);
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
@@ -99,7 +212,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, output_text);
 
-    draw_live_data_panel(canvas, &label_dsc_wpm, &line_dsc);
+    draw_live_data_panel(canvas, &label_dsc_wpm, &line_dsc, &icon_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);

@@ -26,7 +26,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 K_MUTEX_DEFINE(live_data_mutex);
 
-static char latest_lines[KEYPOINT_LIVE_DATA_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
+static enum keypoint_live_data_icon latest_icon = KEYPOINT_LIVE_DATA_ICON_NONE;
+static char latest_lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
 static bool latest_has_data;
 static int64_t latest_update_ms;
 
@@ -52,10 +53,39 @@ static K_WORK_DELAYABLE_DEFINE(live_data_stale_work, live_data_stale_work_cb);
 
 static bool is_printable_ascii(uint8_t ch) { return ch >= 0x20 && ch <= 0x7e; }
 
+static int icon_from_field(const char *field, enum keypoint_live_data_icon *icon) {
+    if (strcmp(field, "NONE") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_NONE;
+    } else if (strcmp(field, "SUN") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_SUN;
+    } else if (strcmp(field, "CLOUD") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_CLOUD;
+    } else if (strcmp(field, "RAIN") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_RAIN;
+    } else if (strcmp(field, "TEMP") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_TEMP;
+    } else if (strcmp(field, "WARN") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_WARN;
+    } else if (strcmp(field, "CODE") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_CODE;
+    } else if (strcmp(field, "TIME") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_TIME;
+    } else if (strcmp(field, "CODEX") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_CODEX;
+    } else if (strcmp(field, "CLAUDE") == 0) {
+        *icon = KEYPOINT_LIVE_DATA_ICON_CLAUDE;
+    } else {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 int keypoint_live_data_parse(const uint8_t *data, uint16_t len,
-                             char out[KEYPOINT_LIVE_DATA_LINE_COUNT]
+                             enum keypoint_live_data_icon *icon,
+                             char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
-    if (data == NULL || out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
+    if (data == NULL || icon == NULL || out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
         return -EINVAL;
     }
 
@@ -64,36 +94,43 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len,
         return -EINVAL;
     }
 
-    memset(out, 0, KEYPOINT_LIVE_DATA_LINE_COUNT * (KEYPOINT_LIVE_DATA_LINE_MAX + 1));
+    char icon_field[KEYPOINT_LIVE_DATA_ICON_MAX + 1] = {};
+    memset(out, 0, KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * (KEYPOINT_LIVE_DATA_LINE_MAX + 1));
 
-    size_t line = 0;
+    size_t field = 0;
     size_t column = 0;
 
     for (size_t i = prefix_len; i < len; i++) {
         const uint8_t ch = data[i];
 
         if (ch == '|') {
-            if (line >= KEYPOINT_LIVE_DATA_LINE_COUNT - 1) {
+            if (field >= KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
                 return -EINVAL;
             }
 
-            line++;
+            field++;
             column = 0;
             continue;
         }
 
-        if (!is_printable_ascii(ch) || column >= KEYPOINT_LIVE_DATA_LINE_MAX) {
+        const size_t field_max =
+            (field == 0) ? KEYPOINT_LIVE_DATA_ICON_MAX : KEYPOINT_LIVE_DATA_LINE_MAX;
+        if (!is_printable_ascii(ch) || column >= field_max) {
             return -EINVAL;
         }
 
-        out[line][column++] = (char)ch;
+        if (field == 0) {
+            icon_field[column++] = (char)ch;
+        } else {
+            out[field - 1][column++] = (char)ch;
+        }
     }
 
-    if (line != KEYPOINT_LIVE_DATA_LINE_COUNT - 1) {
+    if (field != KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
         return -EINVAL;
     }
 
-    return 0;
+    return icon_from_field(icon_field, icon);
 }
 
 struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
@@ -101,12 +138,13 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
 
     k_mutex_lock(&live_data_mutex, K_FOREVER);
 
+    snapshot.icon = latest_icon;
     snapshot.has_data = latest_has_data;
     const int64_t age_ms = k_uptime_get() - latest_update_ms;
     snapshot.stale = latest_has_data && age_ms >= KEYPOINT_LIVE_DATA_STALE_MS;
 
     if (latest_has_data) {
-        for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT; i++) {
+        for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
             strncpy(snapshot.lines[i], latest_lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
             snapshot.lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
         }
@@ -115,30 +153,21 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
     k_mutex_unlock(&live_data_mutex);
 
     if (!snapshot.has_data) {
+        snapshot.icon = KEYPOINT_LIVE_DATA_ICON_WARN;
         strcpy(snapshot.lines[0], "NO DATA");
         strcpy(snapshot.lines[1], "WAITING");
-    } else if (snapshot.stale) {
-        char previous[KEYPOINT_LIVE_DATA_LINE_COUNT - 1][KEYPOINT_LIVE_DATA_LINE_MAX + 1] = {};
-
-        for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT - 1; i++) {
-            strncpy(previous[i], snapshot.lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
-        }
-
-        memset(snapshot.lines, 0, sizeof(snapshot.lines));
-        strcpy(snapshot.lines[0], "STALE");
-        for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT - 1; i++) {
-            strncpy(snapshot.lines[i + 1], previous[i], KEYPOINT_LIVE_DATA_LINE_MAX);
-        }
     }
 
     return snapshot;
 }
 
-static void store_live_data(char lines[KEYPOINT_LIVE_DATA_LINE_COUNT]
+static void store_live_data(enum keypoint_live_data_icon icon,
+                            char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                       [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
     k_mutex_lock(&live_data_mutex, K_FOREVER);
 
-    for (int i = 0; i < KEYPOINT_LIVE_DATA_LINE_COUNT; i++) {
+    latest_icon = icon;
+    for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
         strncpy(latest_lines[i], lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
         latest_lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
     }
@@ -158,14 +187,15 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
-    char parsed[KEYPOINT_LIVE_DATA_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
-    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, parsed);
+    enum keypoint_live_data_icon icon;
+    char parsed[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
+    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &icon, parsed);
     if (ret < 0) {
         LOG_WRN("Rejected live-data payload len=%u", len);
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
-    store_live_data(parsed);
+    store_live_data(icon, parsed);
     k_work_reschedule(&live_data_stale_work, K_MSEC(KEYPOINT_LIVE_DATA_STALE_MS + 1));
 
     submit_live_data_display_refresh();

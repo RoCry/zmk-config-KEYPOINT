@@ -13,10 +13,11 @@ SENDER = ROOT / "scripts/send_keypoint_live_demo.py"
 def test_live_data_firmware_contract_constants() -> None:
     text = LIVE_DATA_H.read_text()
 
-    assert "#define KEYPOINT_LIVE_DATA_LINE_COUNT 4" in text
+    assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 3" in text
     assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 8" in text
-    assert "#define KEYPOINT_LIVE_DATA_STALE_MS 120000" in text
-    assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP1|"' in text
+    assert "#define KEYPOINT_LIVE_DATA_ICON_MAX 8" in text
+    assert "#define KEYPOINT_LIVE_DATA_STALE_MS 360000" in text
+    assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP2|"' in text
 
 
 def test_live_data_ble_uuids_are_stable() -> None:
@@ -81,13 +82,43 @@ def test_live_data_panel_dims_stale_snapshot() -> None:
     assert ".opa" in panel
 
 
+def test_live_data_kp2_icon_contract_is_explicit() -> None:
+    header = LIVE_DATA_H.read_text()
+    firmware = LIVE_DATA_C.read_text()
+    status = STATUS_C.read_text()
+
+    for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
+        assert f"KEYPOINT_LIVE_DATA_ICON_{icon}" in header
+
+    assert "enum keypoint_live_data_icon *icon" in firmware
+    assert "icon_from_field(" in firmware
+    assert "draw_live_data_icon(" in status
+    assert "draw_bitmap_icon(" in status
+
+
+def test_live_data_stale_keeps_last_payload_text() -> None:
+    text = LIVE_DATA_C.read_text()
+
+    assert '"STALE"' not in text
+    assert "snapshot.stale" in text
+
+
 def test_demo_sender_uses_same_limits() -> None:
     text = SENDER.read_text()
 
-    assert "LINE_COUNT = 4" in text
+    assert "TEXT_LINE_COUNT = 3" in text
     assert "LINE_MAX = 8" in text
-    assert 'PREFIX = "KP1|"' in text
+    assert "ICON_IDS" in text
+    assert 'PREFIX = "KP2|"' in text
     assert 'CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"' in text
+
+
+def test_demo_sender_uses_data_time_not_send_time() -> None:
+    text = SENDER.read_text()
+
+    assert "source_interval" in text
+    assert "data_time" in text
+    assert "with_current_time" not in text
 
 
 def test_demo_sender_can_resolve_macos_connected_keyboard() -> None:
