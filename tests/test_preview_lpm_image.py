@@ -146,7 +146,50 @@ def test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets() -
         assert bitmap_pixels_from_c_array(output.read_text(), symbol="sample", width=3, height=2) == {(0, 1)}
 
 
+def test_write_firmware_c_array_can_invert_packed_bitmap_pixels() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "marker.png"
+        normal_output = tmp_path / "sample.c"
+        inverted_output = tmp_path / "sample_inverted.c"
+
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(source)
+
+        preview.write_firmware_c_array(
+            source,
+            normal_output,
+            symbol="sample",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+        preview.write_firmware_c_array(
+            source,
+            inverted_output,
+            symbol="sample_inverted",
+            size=(2, 3),
+            logical_size=(3, 2),
+            invert_pixels=True,
+        )
+
+        all_pixels = {(x, y) for y in range(2) for x in range(3)}
+        normal_pixels = bitmap_pixels_from_c_array(normal_output.read_text(), symbol="sample", width=3, height=2)
+        inverted_pixels = bitmap_pixels_from_c_array(
+            inverted_output.read_text(),
+            symbol="sample_inverted",
+            width=3,
+            height=2,
+        )
+
+        assert normal_pixels == {(0, 1)}
+        assert inverted_pixels == all_pixels - normal_pixels
+
+
 if __name__ == "__main__":
     test_generate_previews_creates_expected_keyboard_sized_variants()
     test_write_firmware_c_array_uses_logical_landscape_lvgl_format()
     test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets()
+    test_write_firmware_c_array_can_invert_packed_bitmap_pixels()

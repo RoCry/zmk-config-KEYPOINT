@@ -186,6 +186,7 @@ def write_firmware_c_array(
     focus: tuple[float, float] = (0.5, 0.38),
     frame: str = "crop_face",
     rotation: str = DEFAULT_FIRMWARE_ROTATION,
+    invert_pixels: bool = False,
 ) -> Path:
     with Image.open(source) as original:
         frames = framing_variants(original, size=size, focus=focus)
@@ -193,6 +194,8 @@ def write_firmware_c_array(
 
     dithered = quantize_gray(portrait, levels=2, dither=True).convert("L")
     logical = rotate_for_firmware(dithered, rotation)
+    if invert_pixels:
+        logical = ImageOps.invert(logical)
     if logical.size != logical_size:
         raise ValueError(
             f"firmware image became {logical.size[0]}x{logical.size[1]}, expected {logical_size[0]}x{logical_size[1]}"
@@ -405,6 +408,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_FIRMWARE_ROTATION,
         help=f"Rotate portrait preview into firmware logical image, default {DEFAULT_FIRMWARE_ROTATION}",
     )
+    parser.add_argument(
+        "--firmware-invert-pixels",
+        action="store_true",
+        help="Invert packed 1-bit firmware pixels before writing the C array",
+    )
     return parser.parse_args()
 
 
@@ -437,6 +445,7 @@ def main() -> None:
                 focus=(args.focus_x, args.focus_y),
                 frame=args.firmware_frame,
                 rotation=args.firmware_rotation,
+                invert_pixels=args.firmware_invert_pixels,
             )
         )
 
