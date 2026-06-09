@@ -8,6 +8,7 @@ BINDING_CHECKER = ROOT / "scripts/check_keypoint_bindings.py"
 LIVE_DATA_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data.h"
 LIVE_DATA_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data.c"
 STATUS_C = ROOT / "config/boards/shields/lpm_view/widgets/status.c"
+STATUS_LAYOUT_H = ROOT / "config/boards/shields/lpm_view/widgets/status_layout.h"
 UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
 CMAKE = ROOT / "config/boards/shields/lpm_view/CMakeLists.txt"
 KCONFIG = ROOT / "config/boards/shields/lpm_view/Kconfig.defconfig"
@@ -132,6 +133,38 @@ def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
     assert "init_line_dsc(" in text
 
 
+def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> None:
+    text = STATUS_C.read_text()
+    layout = STATUS_LAYOUT_H.read_text()
+
+    for name in (
+        "KEYPOINT_LIVE_TEXT_X",
+        "KEYPOINT_LIVE_TEXT_Y",
+        "KEYPOINT_LIVE_DIVIDER_Y",
+        "KEYPOINT_LIVE_HEALTH_Y",
+        "KEYPOINT_PROFILE_SLOT_WIDTH",
+        "KEYPOINT_PROFILE_SLOT_HEIGHT",
+        "KEYPOINT_PROFILE_MARK_SIZE",
+    ):
+        assert name in text
+        assert name in layout
+
+    assert "lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67" not in text
+    assert "draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);" not in text
+
+
+def test_live_data_panel_draws_health_strip() -> None:
+    text = STATUS_C.read_text()
+
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel_end = text.index("static void draw_top(", panel_start)
+    panel = text[panel_start:panel_end]
+
+    assert "draw_live_data_health_strip(" in panel
+    assert "snapshot->has_data" in text
+    assert "KEYPOINT_LIVE_HEALTH_Y" in text
+
+
 def test_live_data_panel_dims_stale_snapshot() -> None:
     text = STATUS_C.read_text()
 
@@ -146,6 +179,7 @@ def test_live_data_panel_dims_stale_snapshot() -> None:
 
 def test_live_data_icon_does_not_reduce_text_width() -> None:
     text = STATUS_C.read_text()
+    layout = STATUS_LAYOUT_H.read_text()
 
     panel_start = text.index("static void draw_live_data_panel(")
     panel_end = text.index("static void draw_top(", panel_start)
@@ -153,9 +187,10 @@ def test_live_data_icon_does_not_reduce_text_width() -> None:
 
     assert "const bool has_icon" not in panel
     assert "text_x = has_icon" not in panel
-    assert "lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67" in panel
-    assert "#define LIVE_DATA_ICON_SCALE 1" in text
-    assert "draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);" in text
+    assert "KEYPOINT_LIVE_TEXT_WIDTH" in panel
+    assert "#define KEYPOINT_LIVE_ICON_SCALE 1" in layout
+    assert "KEYPOINT_LIVE_ICON_X" in text
+    assert "KEYPOINT_LIVE_ICON_Y" in text
 
 
 def test_live_data_kp2_icon_contract_is_explicit() -> None:
@@ -173,10 +208,10 @@ def test_live_data_kp2_icon_contract_is_explicit() -> None:
 
 
 def test_codex_icon_uses_openai_mark_inspired_bitmap() -> None:
-    status = STATUS_C.read_text()
+    status = STATUS_LAYOUT_H.read_text()
 
     assert (
-        "static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {\n"
+        "static const char icon_codex[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {\n"
         '    "00111100", "01011010", "10100101", "10111101",\n'
         '    "10111101", "10100101", "01011010", "00111100",\n'
         "};"

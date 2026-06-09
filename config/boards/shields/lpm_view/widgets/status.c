@@ -25,6 +25,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/keymap.h>
 
 #include "live_data.h"
+#include "status_layout.h"
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
@@ -42,63 +43,16 @@ struct layer_status_state {
     const char *label;
 };
 
-#define LIVE_DATA_ICON_SIZE 8
-#define LIVE_DATA_ICON_SCALE 1
-
-static const char icon_sun[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00100100", "00011000", "10111101", "01111110",
-    "01111110", "10111101", "00011000", "00100100",
-};
-
-static const char icon_cloud[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00000000", "00111000", "01111100", "11111110",
-    "11111110", "01111100", "00000000", "00000000",
-};
-
-static const char icon_rain[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00111000", "01111100", "11111110", "01111100",
-    "00000000", "01001000", "10010000", "00100100",
-};
-
-static const char icon_temp[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00110000", "01001000", "01001000", "01001000",
-    "01001000", "10000100", "10000100", "01111000",
-};
-
-static const char icon_warn[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00010000", "00111000", "00111000", "01101100",
-    "01101100", "11111110", "11101110", "11111110",
-};
-
-static const char icon_code[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "10000010", "01000100", "00101000", "00010000",
-    "00101000", "01000100", "10000010", "00010000",
-};
-
-static const char icon_time[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00111100", "01000010", "10010001", "10010001",
-    "10011101", "10000001", "01000010", "00111100",
-};
-
-static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00111100", "01011010", "10100101", "10111101",
-    "10111101", "10100101", "01011010", "00111100",
-};
-
-static const char icon_claude[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {
-    "00010000", "00010000", "01010100", "00111000",
-    "11111110", "00111000", "01010100", "00010000",
-};
-
 static void draw_bitmap_icon(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
                              const lv_draw_rect_dsc_t *icon_dsc,
-                             const char rows[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1]) {
-    for (int row = 0; row < LIVE_DATA_ICON_SIZE; row++) {
-        for (int column = 0; column < LIVE_DATA_ICON_SIZE; column++) {
+                             const char rows[KEYPOINT_LIVE_ICON_SIZE]
+                                            [KEYPOINT_LIVE_ICON_SIZE + 1]) {
+    for (int row = 0; row < KEYPOINT_LIVE_ICON_SIZE; row++) {
+        for (int column = 0; column < KEYPOINT_LIVE_ICON_SIZE; column++) {
             if (rows[row][column] == '1') {
-                lv_canvas_draw_rect(canvas, x + (column * LIVE_DATA_ICON_SCALE),
-                                    y + (row * LIVE_DATA_ICON_SCALE), LIVE_DATA_ICON_SCALE,
-                                    LIVE_DATA_ICON_SCALE, icon_dsc);
+                lv_canvas_draw_rect(canvas, x + (column * KEYPOINT_LIVE_ICON_SCALE),
+                                    y + (row * KEYPOINT_LIVE_ICON_SCALE),
+                                    KEYPOINT_LIVE_ICON_SCALE, KEYPOINT_LIVE_ICON_SCALE, icon_dsc);
             }
         }
     }
@@ -106,7 +60,7 @@ static void draw_bitmap_icon(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
 
 static void draw_live_data_icon(lv_obj_t *canvas, enum keypoint_live_data_icon icon,
                                 const lv_draw_rect_dsc_t *icon_dsc) {
-    const char(*rows)[LIVE_DATA_ICON_SIZE + 1] = NULL;
+    const char(*rows)[KEYPOINT_LIVE_ICON_SIZE + 1] = NULL;
 
     switch (icon) {
     case KEYPOINT_LIVE_DATA_ICON_NONE:
@@ -140,7 +94,29 @@ static void draw_live_data_icon(lv_obj_t *canvas, enum keypoint_live_data_icon i
         break;
     }
 
-    draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);
+    draw_bitmap_icon(canvas, KEYPOINT_LIVE_ICON_X, KEYPOINT_LIVE_ICON_Y, icon_dsc, rows);
+}
+
+static void draw_live_data_health_strip(lv_obj_t *canvas,
+                                        const struct keypoint_live_data_snapshot *snapshot,
+                                        const lv_draw_rect_dsc_t *rect_dsc) {
+    if (!snapshot->has_data) {
+        lv_canvas_draw_rect(canvas, 30, KEYPOINT_LIVE_HEALTH_Y, 13,
+                            KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
+        return;
+    }
+
+    if (snapshot->stale) {
+        static const lv_coord_t segment_x[] = {2, 18, 34, 50, 64};
+        for (size_t i = 0; i < ARRAY_SIZE(segment_x); i++) {
+            lv_canvas_draw_rect(canvas, segment_x[i], KEYPOINT_LIVE_HEALTH_Y, 6,
+                                KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
+        }
+        return;
+    }
+
+    lv_canvas_draw_rect(canvas, KEYPOINT_LIVE_HEALTH_X, KEYPOINT_LIVE_HEALTH_Y,
+                        KEYPOINT_LIVE_HEALTH_WIDTH, KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
 }
 
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
@@ -160,12 +136,17 @@ static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
     draw_live_data_icon(canvas, snapshot.icon, &live_icon_dsc);
 
     for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67, &live_label_dsc,
-                            snapshot.lines[i]);
+        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
+                            KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
+                            KEYPOINT_LIVE_TEXT_WIDTH, &live_label_dsc, snapshot.lines[i]);
     }
 
-    lv_point_t divider_points[] = {{0, 65}, {70, 65}};
+    lv_point_t divider_points[] = {
+        {0, KEYPOINT_LIVE_DIVIDER_Y},
+        {KEYPOINT_LIVE_DIVIDER_WIDTH, KEYPOINT_LIVE_DIVIDER_Y},
+    };
     lv_canvas_draw_line(canvas, divider_points, 2, &live_divider_dsc);
+    draw_live_data_health_strip(canvas, &snapshot, &live_icon_dsc);
 }
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -231,10 +212,27 @@ static void draw_rect_outline(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_c
     lv_canvas_draw_rect(canvas, x + width - 1, y, 1, height, rect_dsc);
 }
 
-static void draw_plus_marker(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
+static void draw_plus_marker(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t size,
                              const lv_draw_rect_dsc_t *rect_dsc) {
-    lv_canvas_draw_rect(canvas, x + 2, y, 1, 5, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, y + 2, 5, 1, rect_dsc);
+    const lv_coord_t center = size / 2;
+    lv_canvas_draw_rect(canvas, x + center, y, 1, size, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, y + center, size, 1, rect_dsc);
+}
+
+static void draw_profile_open_slot(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
+                                   const lv_draw_rect_dsc_t *rect_dsc) {
+    const lv_coord_t right = x + KEYPOINT_PROFILE_SLOT_WIDTH - 1;
+    const lv_coord_t bottom = y + KEYPOINT_PROFILE_SLOT_HEIGHT - 1;
+    const lv_coord_t corner = KEYPOINT_PROFILE_CORNER_SIZE;
+
+    lv_canvas_draw_rect(canvas, x, y, corner, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, y, 1, corner, rect_dsc);
+    lv_canvas_draw_rect(canvas, right - corner + 1, y, corner, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, right, y, 1, corner, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, bottom, corner, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, bottom - corner + 1, 1, corner, rect_dsc);
+    lv_canvas_draw_rect(canvas, right - corner + 1, bottom, corner, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, right, bottom - corner + 1, 1, corner, rect_dsc);
 }
 
 static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state, uint8_t index,
@@ -250,30 +248,29 @@ static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state
     char label[2];
 
     if (active) {
-        lv_canvas_draw_rect(canvas, x, y, 29, 23, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
+                            KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
     } else if (bonded) {
-        draw_rect_outline(canvas, x, y, 29, 23, foreground_rect_dsc);
+        draw_rect_outline(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
+                          KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
     } else {
-        lv_canvas_draw_rect(canvas, x, y, 7, 1, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x, y, 1, 7, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x + 22, y, 7, 1, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x + 28, y, 1, 7, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x, y + 22, 7, 1, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x, y + 16, 1, 7, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x + 22, y + 22, 7, 1, foreground_rect_dsc);
-        lv_canvas_draw_rect(canvas, x + 28, y + 16, 1, 7, foreground_rect_dsc);
+        draw_profile_open_slot(canvas, x, y, foreground_rect_dsc);
     }
 
     snprintk(label, sizeof(label), "%u", index + 1);
     lv_canvas_draw_text(canvas, x + 2, y + 2, 16, active ? background_label_dsc : foreground_label_dsc,
                         label);
 
+    const lv_coord_t mark_x = x + KEYPOINT_PROFILE_MARK_X_OFFSET;
+    const lv_coord_t mark_y = y + KEYPOINT_PROFILE_MARK_Y_OFFSET;
     if (connected) {
-        lv_canvas_draw_rect(canvas, x + 21, y + 7, 5, 5, status_rect_dsc);
+        lv_canvas_draw_rect(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE,
+                            KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
     } else if (bonded) {
-        draw_rect_outline(canvas, x + 21, y + 7, 5, 5, status_rect_dsc);
+        draw_rect_outline(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE,
+                          KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
     } else {
-        draw_plus_marker(canvas, x + 21, y + 7, status_rect_dsc);
+        draw_plus_marker(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
     }
 }
 
@@ -283,10 +280,10 @@ static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state
                               const lv_draw_label_dsc_t *foreground_label_dsc,
                               const lv_draw_label_dsc_t *background_label_dsc) {
     static const lv_coord_t slot_offsets[KEYPOINT_STATUS_PROFILE_COUNT][2] = {
-        {4, 8},
-        {39, 8},
-        {4, 41},
-        {39, 41},
+        {3, 6},
+        {39, 6},
+        {3, 40},
+        {39, 40},
     };
 
     for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
@@ -336,8 +333,10 @@ static void draw_layer_chip(lv_obj_t *canvas, const struct status_state *state,
     char fallback[10] = {};
     const char *label = layer_chip_text(state, fallback, sizeof(fallback));
 
-    draw_rect_outline(canvas, 2, 20, 68, 28, rect_dsc);
-    lv_canvas_draw_text(canvas, 4, 24, 64, label_dsc, label);
+    draw_rect_outline(canvas, KEYPOINT_LAYER_CHIP_X, KEYPOINT_LAYER_CHIP_Y,
+                      KEYPOINT_LAYER_CHIP_WIDTH, KEYPOINT_LAYER_CHIP_HEIGHT, rect_dsc);
+    lv_canvas_draw_text(canvas, KEYPOINT_LAYER_CHIP_X + 2, KEYPOINT_LAYER_CHIP_Y + 4,
+                        KEYPOINT_LAYER_CHIP_WIDTH - 4, label_dsc, label);
 }
 
 static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
