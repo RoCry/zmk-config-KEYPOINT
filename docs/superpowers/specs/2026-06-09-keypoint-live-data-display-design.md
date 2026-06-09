@@ -4,7 +4,7 @@
 
 Show small host-provided live data on the left KEYPOINT display by replacing the
 current WPM graph area. First version ships with a BLE demo sender that pushes
-mock data every 30 seconds. Real data sources can replace the sender provider
+randomized mock data by default. Real data sources can replace the sender provider
 without changing firmware protocol.
 
 ## Scope
@@ -73,6 +73,21 @@ Use a custom BLE GATT service on the keyboard:
 The host script connects to the keyboard by BLE name or explicit address and
 writes the text frame to the characteristic every 30 seconds.
 
+## Firmware Artifacts And Bootloader Entry
+
+Use short GitHub Actions artifact names in `build.yaml`:
+
+- `left.uf2`
+- `right.uf2`
+- `left-reset.uf2`
+- `right-reset.uf2`
+
+Add layer-based Bootloader shortcuts without changing the base-layer tap
+behavior:
+
+- Left hand: hold `LOWER` and press the physical base-layer `MUTE` key.
+- Right hand: hold `SYMBOL` and press the physical base-layer `Ctl+Up` key.
+
 ## Firmware Shape
 
 Add a focused live-data module under `config/boards/shields/lpm_view/widgets/`:
@@ -103,18 +118,22 @@ Create `scripts/send_keypoint_live_demo.py`:
 - CLI flags:
   - `--name KEYPOINT`
   - `--address <BLE address or UUID>`
-  - `--interval 30`
-  - `--source-interval 900`
+  - `--interval 2`
+  - `--source-interval 2`
   - `--count <n>`
   - `--once`
+  - `--random / --sequential`
+  - `--seed <n>`
 - Sends mock frames such as:
   - `KP2|SUN|SUNNY|TMP 24C|12:34`
   - `KP2|CODEX|CODEX|5h 58%|12:34`
   - `KP2|CLAUDE|CLAUDE|CODE|12:34`
 - `--interval` controls BLE rebroadcast frequency. `--source-interval`
   controls when the demo source data and `TIME` field change.
-- Demo data intentionally covers all supported icon IDs and several 8-character
-  edge-case text fields for layout validation.
+- Default demo mode randomizes dynamic weather, code/build, Codex, Claude Code,
+  time, warning, and edge-case samples.
+- `--sequential` cycles through a stable sample set covering all supported icon
+  IDs and several 8-character edge-case text fields for layout validation.
 
 ## Testing
 

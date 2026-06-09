@@ -3,13 +3,17 @@
 include:
   - board: zitaotech_keypoint_left
     shield: lpm_view;left_bbtrackpad_keypoint
+    artifact-name: left
 
   - board: zitaotech_keypoint_right
     shield: lpm_view;right_trackpoint_keypoint
+    artifact-name: right
 
 
 # rest firmware
   - board: zitaotech_keypoint_left
     shield: lpm_view;left_bbtrackpad_keypoint;settings_reset
+    artifact-name: left-reset
   - board: zitaotech_keypoint_right
     shield: lpm_view;right_trackpoint_keypoint;settings_reset
+    artifact-name: right-reset

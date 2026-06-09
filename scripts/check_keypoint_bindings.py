@@ -19,6 +19,7 @@ BOARD_KEYMAP_INCLUDE = '#include "../../../keypoint.keymap"'
 
 BINDING_CELLS = {
     "&bl": 1,
+    "&bootloader": 0,
     "&bt": 1,
     "&cmd_grave": 0,
     "&cmd_space": 0,
@@ -58,7 +59,11 @@ EXPECTED_LOWER_BINDINGS = {
     29: "&kp N9",
     30: "&kp N0",
     31: "&cmd_grave",  # Cmd+` window switch macro
-    45: "&trans",  # BT_CLR belongs on FN only
+    45: "&bootloader",  # left layer1+Mute enters bootloader
+}
+
+EXPECTED_SYMBOL_BINDINGS = {
+    52: "&bootloader",  # right layer2+Ctrl+Up enters bootloader
 }
 
 EXPECTED_MACROS = {
@@ -196,6 +201,16 @@ def main() -> None:
             actual = lower_bindings[index]
             if actual != expected:
                 failures.append(f"{keymap}: lower_layer[{index}] is {actual!r}, expected {expected!r}")
+
+        symbol_bindings = layer_bindings(text, "symbol_layer")
+        if len(symbol_bindings) != 56:
+            failures.append(f"{keymap}: symbol_layer has {len(symbol_bindings)} bindings, expected 56")
+            continue
+
+        for index, expected in EXPECTED_SYMBOL_BINDINGS.items():
+            actual = symbol_bindings[index]
+            if actual != expected:
+                failures.append(f"{keymap}: symbol_layer[{index}] is {actual!r}, expected {expected!r}")
 
         try:
             pointing_bindings = layer_bindings(text, "pointing_layer")

@@ -1,6 +1,10 @@
+import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD_YAML = ROOT / "build.yaml"
+KEYMAP = ROOT / "config/keypoint.keymap"
+BINDING_CHECKER = ROOT / "scripts/check_keypoint_bindings.py"
 LIVE_DATA_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data.h"
 LIVE_DATA_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data.c"
 STATUS_C = ROOT / "config/boards/shields/lpm_view/widgets/status.c"
@@ -8,6 +12,33 @@ UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
 CMAKE = ROOT / "config/boards/shields/lpm_view/CMakeLists.txt"
 KCONFIG = ROOT / "config/boards/shields/lpm_view/Kconfig.defconfig"
 SENDER = ROOT / "scripts/send_keypoint_live_demo.py"
+
+
+def load_binding_checker():
+    spec = importlib.util.spec_from_file_location("check_keypoint_bindings", BINDING_CHECKER)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_build_matrix_uses_short_artifact_names() -> None:
+    text = BUILD_YAML.read_text()
+
+    for artifact_name in ("left", "right", "left-reset", "right-reset"):
+        assert f"artifact-name: {artifact_name}" in text
+
+
+def test_bootloader_shortcuts_are_on_requested_layer_positions() -> None:
+    checker = load_binding_checker()
+    text = checker.read_keymap_text(KEYMAP)
+
+    lower_bindings = checker.layer_bindings(text, "lower_layer")
+    symbol_bindings = checker.layer_bindings(text, "symbol_layer")
+
+    assert lower_bindings[45] == "&bootloader"
+    assert symbol_bindings[52] == "&bootloader"
 
 
 def test_live_data_firmware_contract_constants() -> None:
@@ -145,6 +176,28 @@ def test_demo_sender_exercises_diverse_icon_data() -> None:
     assert text.count("DemoSource(") >= 16
     assert '"MAX8CHAR"' in text
     assert '"ABCDEFGH"' in text
+
+
+def test_demo_sender_randomizes_dynamic_mock_data_by_default() -> None:
+    text = SENDER.read_text()
+
+    assert "import random" in text
+    assert "DEMO_GENERATORS" in text
+    assert "random_demo_source(" in text
+    assert "randomize: bool = typer.Option(True" in text
+    assert '"--random/--sequential"' in text
+    assert "source_interval: float = typer.Option(2.0" in text
+
+    for generator_name in (
+        "random_sun_source",
+        "random_cloud_source",
+        "random_rain_source",
+        "random_temp_source",
+        "random_warn_source",
+        "random_codex_source",
+        "random_claude_source",
+    ):
+        assert generator_name in text
 
 
 def test_demo_sender_can_resolve_macos_connected_keyboard() -> None:

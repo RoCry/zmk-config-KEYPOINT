@@ -115,7 +115,7 @@
 &gresc     &kp N1  &kp N2  &kp N3      &kp N0  &kp N0     &kp N6     &kp N7     &kp N8      &kp N9      &kp N0  &kp DEL
 &kp LCTRL  &kp N4  &kp N5  &kp N6      &kp N0  &kp N0     &mkp RCLK  &mkp RCLK  &kp LEFT    &kp DOWN    &kp UP  &kp RIGHT  &trans  &trans
 &kp LSHFT  &kp N7  &kp N8  &kp N9      &kp N0  &cmd_grave  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
-&trans     &trans  &trans  &trans      &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
+&trans     &trans  &trans  &bootloader &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
             >;
 
             sensor-bindings = <&BLE_encoder &scroll_encoder>;
@@ -127,7 +127,7 @@
 &kp ESC    &kp EXCL   &kp AT     &kp HASH  &kp DLLR      &kp PRCNT  &kp CARET   &kp AMPS  &kp STAR  &kp LPAR  &kp RPAR   &trans
 &kp LCTRL  &kp MINUS  &kp UNDER  &kp SQT   &kp DQT       &kp BSLH   &kp C_MUTE  &mkp MB3  &kp PIPE  &kp LBKT  &kp RBKT   &kp LBRC  &kp RBRC   &trans
 &kp LSHFT  &kp EQUAL  &kp PLUS   &kp FSLH  &kp QUESTION  &kp GRAVE  &trans      &trans    &trans    &trans    &kp TILDE  &kp SEMI  &kp COLON  &trans  &trans  &kp RSHFT
-&trans     &trans     &trans     &trans    &kp LALT      &kp LGUI   &mo FN      &kp BSPC  &trans    &trans    &trans     &trans    &trans     &trans
+&trans     &trans     &trans     &trans    &kp LALT      &kp LGUI   &mo FN      &kp BSPC  &trans    &trans    &bootloader &trans    &trans     &trans
             >;
 
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;

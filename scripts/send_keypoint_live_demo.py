@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import platform
-from collections.abc import Sequence
+import random
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import cycle
@@ -74,6 +75,95 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
 app = typer.Typer(help="Send mock live-data frames to the KEYPOINT left display over BLE.")
 
 BleTarget: TypeAlias = BLEDevice | str
+DemoGenerator: TypeAlias = Callable[[random.Random], DemoSource]
+
+
+def random_none_source(rng: random.Random) -> DemoSource:
+    _ = rng
+    return DemoSource(icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH")
+
+
+def random_sun_source(rng: random.Random) -> DemoSource:
+    return DemoSource(icon="SUN", line1=rng.choice(("SUNNY", "UV HI")), line2=f"TMP {rng.randint(18, 35):02d}C")
+
+
+def random_cloud_source(rng: random.Random) -> DemoSource:
+    return DemoSource(icon="CLOUD", line1=rng.choice(("CLOUDY", "PM2 035")), line2=f"HUM {rng.randint(35, 85):02d}%")
+
+
+def random_rain_source(rng: random.Random) -> DemoSource:
+    return DemoSource(icon="RAIN", line1=f"RN {rng.randint(1, 18):02d}MM", line2=f"WND {rng.randint(1, 18):02d}M")
+
+
+def random_temp_source(rng: random.Random) -> DemoSource:
+    return DemoSource(icon="TEMP", line1="TEMP", line2=f"OUT {rng.randint(10, 35):02d}C")
+
+
+def random_warn_source(rng: random.Random) -> DemoSource:
+    if rng.choice((True, False)):
+        return DemoSource(icon="WARN", line1="AQI WARN", line2=f"AQI {rng.randint(101, 199):03d}")
+    return DemoSource(icon="WARN", line1="LOW BATT", line2=f"BAT {rng.randint(5, 19):02d}%")
+
+
+def random_code_source(rng: random.Random) -> DemoSource:
+    if rng.choice((True, False)):
+        return DemoSource(icon="CODE", line1="BUILD OK", line2="READY")
+    return DemoSource(icon="CODE", line1="CI PASS", line2=f"{rng.randint(10, 99)} TEST")
+
+
+def random_time_source(rng: random.Random) -> DemoSource:
+    return DemoSource(icon="TIME", line1="LOCAL", line2=rng.choice(("SYNC OK", "TZ UTC8")))
+
+
+def random_codex_source(rng: random.Random) -> DemoSource:
+    if rng.choice((True, False)):
+        return DemoSource(icon="CODEX", line1="CODEX", line2=f"{rng.randint(1, 9)}h {rng.randint(10, 99)}%")
+    return DemoSource(
+        icon="CODEX",
+        line1=f"{rng.randint(1, 7)}D {rng.randint(10, 99)}%",
+        line2=f"CTX {rng.randint(10, 99)}%",
+    )
+
+
+def random_claude_source(rng: random.Random) -> DemoSource:
+    if rng.choice((True, False)):
+        return DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE")
+    return DemoSource(icon="CLAUDE", line1=f"TOK {rng.randint(10, 99)}%", line2=f"CTX {rng.randint(10, 99)}%")
+
+
+DEMO_GENERATORS: tuple[DemoGenerator, ...] = (
+    random_none_source,
+    random_sun_source,
+    random_cloud_source,
+    random_rain_source,
+    random_temp_source,
+    random_warn_source,
+    random_code_source,
+    random_time_source,
+    random_codex_source,
+    random_claude_source,
+)
+
+
+def random_demo_source(rng: random.Random, previous: DemoSource | None) -> DemoSource:
+    for _ in range(8):
+        source = rng.choice(DEMO_GENERATORS)(rng)
+        if previous is None or source != previous:
+            return source
+
+    return source
+
+
+def next_demo_source(
+    source_iter: Iterator[DemoSource],
+    rng: random.Random,
+    randomize: bool,
+    previous: DemoSource | None,
+) -> DemoSource:
+    if randomize:
+        return random_demo_source(rng=rng, previous=previous)
+
+    return next(source_iter)
 
 
 def validate_icon(icon: str) -> None:
@@ -160,6 +250,8 @@ async def send_loop(
     source_interval: float,
     count: int | None,
     once: bool,
+    randomize: bool,
+    seed: int | None,
     scan_timeout: float,
 ) -> None:
     if interval <= 0:
@@ -171,7 +263,8 @@ async def send_loop(
 
     target = await resolve_device(name=name, address=address, timeout=scan_timeout)
     source_iter = cycle(DEFAULT_DEMO_SOURCES)
-    source = next(source_iter)
+    rng = random.Random(seed)
+    source = next_demo_source(source_iter=source_iter, rng=rng, randomize=randomize, previous=None)
     data_time = datetime.now().strftime("%H:%M")
     next_source_update = monotonic() + source_interval
     sent_count = 0
@@ -180,7 +273,7 @@ async def send_loop(
         while True:
             now = monotonic()
             if now >= next_source_update:
-                source = next(source_iter)
+                source = next_demo_source(source_iter=source_iter, rng=rng, randomize=randomize, previous=source)
                 data_time = datetime.now().strftime("%H:%M")
                 next_source_update = now + source_interval
 
@@ -200,10 +293,12 @@ async def send_loop(
 def main(
     name: str = typer.Option("KEYPOINT", help="BLE device name to scan for when --address is unset."),
     address: str | None = typer.Option(None, help="BLE address/UUID. On macOS this is often a UUID."),
-    interval: float = typer.Option(30.0, min=0.1, help="Seconds between mock frames."),
-    source_interval: float = typer.Option(900.0, min=0.1, help="Seconds between mock data-source updates."),
+    interval: float = typer.Option(2.0, min=0.1, help="Seconds between mock frames."),
+    source_interval: float = typer.Option(2.0, min=0.1, help="Seconds between mock data-source updates."),
     count: int | None = typer.Option(None, min=1, help="Send this many frames and exit."),
     once: bool = typer.Option(False, help="Send one frame and exit."),
+    randomize: bool = typer.Option(True, "--random/--sequential", help="Randomize mock data-source updates."),
+    seed: int | None = typer.Option(None, help="Seed random mock data for reproducible visual tests."),
     scan_timeout: float = typer.Option(8.0, min=1.0, help="BLE scan timeout in seconds."),
 ) -> None:
     try:
@@ -215,6 +310,8 @@ def main(
                 source_interval=source_interval,
                 count=count,
                 once=once,
+                randomize=randomize,
+                seed=seed,
                 scan_timeout=scan_timeout,
             )
         )
