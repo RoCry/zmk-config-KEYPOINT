@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 
 DEFAULT_SIZE = (72, 120)
 DEFAULT_LOGICAL_SIZE = (120, 72)
+DEFAULT_FIRMWARE_ROTATION = "ccw"
 REMOTE_RE = re.compile(r"^[A-Za-z0-9_.-]+:/")
 
 
@@ -184,7 +185,7 @@ def write_firmware_c_array(
     logical_size: tuple[int, int] = DEFAULT_LOGICAL_SIZE,
     focus: tuple[float, float] = (0.5, 0.38),
     frame: str = "crop_face",
-    rotation: str = "cw",
+    rotation: str = DEFAULT_FIRMWARE_ROTATION,
 ) -> Path:
     with Image.open(source) as original:
         frames = framing_variants(original, size=size, focus=focus)
@@ -401,8 +402,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--firmware-rotation",
         choices=["cw", "ccw", "none"],
-        default="cw",
-        help="Rotate portrait preview into firmware logical image, default cw",
+        default=DEFAULT_FIRMWARE_ROTATION,
+        help=f"Rotate portrait preview into firmware logical image, default {DEFAULT_FIRMWARE_ROTATION}",
     )
     return parser.parse_args()
 

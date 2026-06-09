@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import tempfile
 from pathlib import Path
 
@@ -23,6 +24,24 @@ def load_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def bitmap_pixels_from_c_array(c_source: str, symbol: str, width: int, height: int) -> set[tuple[int, int]]:
+    map_text = c_source[c_source.index(f"{symbol}_map[]") :]
+    map_body = map_text[map_text.index("#endif") :]
+    values = [int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{2})", map_body)]
+    bitmap = values[: ((width + 7) // 8) * height]
+    pixels: set[tuple[int, int]] = set()
+
+    for y in range(height):
+        for byte_index in range((width + 7) // 8):
+            value = bitmap[y * ((width + 7) // 8) + byte_index]
+            for bit in range(8):
+                x = byte_index * 8 + bit
+                if x < width and value & (1 << (7 - bit)):
+                    pixels.add((x, y))
+
+    return pixels
 
 
 def test_generate_previews_creates_expected_keyboard_sized_variants() -> None:
@@ -104,6 +123,30 @@ def test_write_firmware_c_array_uses_logical_landscape_lvgl_format() -> None:
         assert ".data_size = 1088" in c_source
 
 
+def test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        source = tmp_path / "marker.png"
+        output = tmp_path / "sample.c"
+
+        image = Image.new("RGB", (2, 3), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        image.save(source)
+
+        preview.write_firmware_c_array(
+            source,
+            output,
+            symbol="sample",
+            size=(2, 3),
+            logical_size=(3, 2),
+        )
+
+        assert bitmap_pixels_from_c_array(output.read_text(), symbol="sample", width=3, height=2) == {(0, 1)}
+
+
 if __name__ == "__main__":
     test_generate_previews_creates_expected_keyboard_sized_variants()
     test_write_firmware_c_array_uses_logical_landscape_lvgl_format()
+    test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets()
