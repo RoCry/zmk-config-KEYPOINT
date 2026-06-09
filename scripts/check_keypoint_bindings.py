@@ -38,6 +38,20 @@ EXPECTED_DEFAULT_BINDINGS = {
 }
 
 EXPECTED_LOWER_BINDINGS = {
+    1: "&kp N1",
+    2: "&kp N2",
+    3: "&kp N3",
+    4: "&kp N0",
+    5: "&kp N0",
+    13: "&kp N4",
+    14: "&kp N5",
+    15: "&kp N6",
+    16: "&kp N0",
+    17: "&kp N0",
+    27: "&kp N7",
+    28: "&kp N8",
+    29: "&kp N9",
+    30: "&kp N0",
     31: "&cmd_grave",  # Cmd+` window switch macro
 }
 

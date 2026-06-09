@@ -105,9 +105,9 @@
         lower_layer {
             display-name = "LOWER";
             bindings = <
-&gresc     &kp N1  &kp N2  &kp N3      &kp N4  &kp N5     &kp N6     &kp N7     &kp N8      &kp N9      &kp N0  &kp DEL
-&kp LCTRL  &kp N6  &kp N7  &kp N8      &kp N9  &kp N0     &mkp RCLK  &mkp RCLK  &kp LEFT    &kp DOWN    &kp UP  &kp RIGHT  &trans  &trans
-&kp LSHFT  &trans  &trans  &trans      &trans  &cmd_grave  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
+&gresc     &kp N1  &kp N2  &kp N3      &kp N0  &kp N0     &kp N6     &kp N7     &kp N8      &kp N9      &kp N0  &kp DEL
+&kp LCTRL  &kp N4  &kp N5  &kp N6      &kp N0  &kp N0     &mkp RCLK  &mkp RCLK  &kp LEFT    &kp DOWN    &kp UP  &kp RIGHT  &trans  &trans
+&kp LSHFT  &kp N7  &kp N8  &kp N9      &kp N0  &cmd_grave  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
 &trans     &trans  &trans  &bt BT_CLR  &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
             >;
 
