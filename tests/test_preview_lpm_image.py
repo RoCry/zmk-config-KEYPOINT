@@ -40,7 +40,7 @@ def test_generate_previews_creates_expected_keyboard_sized_variants() -> None:
                 img.putpixel((x, y), (tone, tone // 2, 255 - tone))
         img.save(source)
 
-        written = preview.generate_previews(source, output, size=(120, 72), stem="sample")
+        written = preview.generate_previews(source, output, size=(72, 120), stem="sample")
 
         names = {path.name for path in written}
         assert {
@@ -54,22 +54,22 @@ def test_generate_previews_creates_expected_keyboard_sized_variants() -> None:
             "sample_frame_crop_face.png",
             "sample_frame_crop_center.png",
             "sample_frame_contain.png",
-            "sample_frame_rot90_crop.png",
-            "sample_frame_rot270_crop.png",
             "sample_framing_contact_sheet.png",
             "sample_framing_contact_sheet_x4.png",
         } <= names
+        assert "sample_frame_rot90_crop.png" not in names
+        assert "sample_frame_rot270_crop.png" not in names
 
         for path in written:
             with Image.open(path) as produced:
                 if path.name.endswith("_contact_sheet_x4.png") or path.name.endswith("_framing_contact_sheet_x4.png"):
-                    assert produced.size[0] > 120 * 4
-                    assert produced.size[1] > 72 * 4
+                    assert produced.size[0] > 72 * 4
+                    assert produced.size[1] > 120 * 4
                 elif path.name.endswith("_contact_sheet.png") or path.name.endswith("_framing_contact_sheet.png"):
-                    assert produced.size[0] > 120
-                    assert produced.size[1] > 72
+                    assert produced.size[0] > 72
+                    assert produced.size[1] > 120
                 else:
-                    assert produced.size == (120, 72)
+                    assert produced.size == (72, 120)
                     assert produced.mode in {"L", "1"}
 
 

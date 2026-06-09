@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageOps
 
-DEFAULT_SIZE = (120, 72)
+DEFAULT_SIZE = (72, 120)
 REMOTE_RE = re.compile(r"^[A-Za-z0-9_.-]+:/")
 
 
@@ -70,19 +70,29 @@ def contain_image(image: Image.Image, size: tuple[int, int]) -> Image.Image:
 
 
 def framing_variants(
-    image: Image.Image, size: tuple[int, int], focus: tuple[float, float]
+    image: Image.Image,
+    size: tuple[int, int],
+    focus: tuple[float, float],
+    *,
+    include_rotations: bool = False,
 ) -> list[tuple[str, Image.Image]]:
     rgb = image.convert("RGB")
-    rot90 = rgb.rotate(90, expand=True)
-    rot270 = rgb.rotate(270, expand=True)
-    return [
+    variants = [
         ("crop_face", fit_image(rgb, size=size, focus=focus)),
         ("crop_center", fit_image(rgb, size=size, focus=(0.5, 0.5))),
         ("crop_high", fit_image(rgb, size=size, focus=(0.5, 0.28))),
         ("contain", contain_image(rgb, size=size)),
-        ("rot90_crop", fit_image(rot90, size=size, focus=(0.5, 0.5))),
-        ("rot270_crop", fit_image(rot270, size=size, focus=(0.5, 0.5))),
     ]
+    if include_rotations:
+        rot90 = rgb.rotate(90, expand=True)
+        rot270 = rgb.rotate(270, expand=True)
+        variants.extend(
+            [
+                ("rot90_crop", fit_image(rot90, size=size, focus=(0.5, 0.5))),
+                ("rot270_crop", fit_image(rot270, size=size, focus=(0.5, 0.5))),
+            ]
+        )
+    return variants
 
 
 def to_gray(image: Image.Image) -> Image.Image:
@@ -161,12 +171,13 @@ def generate_previews(
     stem: str | None = None,
     focus: tuple[float, float] = (0.5, 0.38),
     contact_scale: int = 4,
+    include_rotations: bool = False,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     name = stem or source.stem
 
     with Image.open(source) as original:
-        frames = framing_variants(original, size=size, focus=focus)
+        frames = framing_variants(original, size=size, focus=focus, include_rotations=include_rotations)
         fitted = frames[0][1]
 
     variants = [
@@ -234,7 +245,12 @@ def parse_args() -> argparse.Namespace:
         default=Path("tmp/lpm_image_previews"),
         help="Directory for preview PNGs",
     )
-    parser.add_argument("--size", type=parse_size, default=DEFAULT_SIZE, help="Preview size, default 120x72")
+    parser.add_argument(
+        "--size",
+        type=parse_size,
+        default=DEFAULT_SIZE,
+        help="Device preview size, default 72x120 portrait",
+    )
     parser.add_argument("--stem", help="Output filename stem")
     parser.add_argument(
         "--focus-x",
@@ -254,6 +270,11 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="Nearest-neighbor scale for the enlarged contact sheet, default 4",
     )
+    parser.add_argument(
+        "--include-rotations",
+        action="store_true",
+        help="Also write 90/270 degree rotation candidates for display-orientation debugging",
+    )
     return parser.parse_args()
 
 
@@ -272,6 +293,7 @@ def main() -> None:
         stem=stem,
         focus=(args.focus_x, args.focus_y),
         contact_scale=args.contact_scale,
+        include_rotations=args.include_rotations,
     )
 
     for path in written:
