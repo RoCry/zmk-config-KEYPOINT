@@ -62,6 +62,31 @@
         };
     };
 
+    macros {
+        cmd_space: cmd_space {
+            compatible = "zmk,behavior-macro";
+            #binding-cells = <0>;
+            bindings = <&macro_press &kp LGUI>, <&macro_tap &kp SPACE>, <&macro_release &kp LGUI>;
+        };
+
+        cmd_grave: cmd_grave {
+            compatible = "zmk,behavior-macro";
+            #binding-cells = <0>;
+            bindings = <&macro_press &kp LGUI>, <&macro_tap &kp GRAVE>, <&macro_release &kp LGUI>;
+        };
+    };
+
+    combos {
+        compatible = "zmk,combos";
+
+        combo_hj_cmd_space {
+            timeout-ms = <50>;
+            key-positions = <20 21>;
+            layers = <0>;
+            bindings = <&cmd_space>;
+        };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
@@ -71,7 +96,7 @@
 &kp TAB        &kp Q     &kp W     &kp E       &kp R     &kp T            &kp Y            &kp U            &kp I           &kp O         &kp P  &kp BSPC
 &mt LCTRL ESC  &kp A     &kp S     &kp D       &kp F     &kp G            &mkp LCLK        &mkp LCLK        &kp H           &kp J         &kp K  &kp L           &kp BSLH         &kp ENTER
 &kp LSHFT      &kp Z     &kp X     &kp C       &kp V     &kp B            &kp PG_DN        &kp PG_UP        &msc SCRL_DOWN  &msc SCRL_UP  &kp N  &kp M           &kp COMMA        &kp DOT       &lt RES UP  &mt RSHFT FSLH
-&kp LCTRL      &kp LALT  &kp LGUI  &kp C_MUTE  &kp LALT  &mt LGUI ESC      &lt LOWER SPACE  &lt SYMBOL BSPC  &mt RSHFT TAB   &kp RALT      &none  &lt LOWER LEFT  &lt SYMBOL DOWN  &lt FN RIGHT
+&kp LCTRL      &kp LALT  &kp LGUI  &kp C_MUTE  &kp LALT  &mt LGUI ESC      &lt LOWER SPACE  &lt SYMBOL BSPC  &mt RSHFT TAB   &mt LC(LA(LS(LGUI))) RALT  &none  &lt LOWER LEFT  &lt SYMBOL DOWN  &lt FN RIGHT
             >;
 
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp PG_UP PG_DN>;
@@ -82,7 +107,7 @@
             bindings = <
 &gresc     &kp N1  &kp N2  &kp N3      &kp N4  &kp N5     &kp N6     &kp N7     &kp N8      &kp N9      &kp N0  &kp DEL
 &kp LCTRL  &kp N6  &kp N7  &kp N8      &kp N9  &kp N0     &mkp RCLK  &mkp RCLK  &kp LEFT    &kp DOWN    &kp UP  &kp RIGHT  &trans  &trans
-&kp LSHFT  &trans  &trans  &trans      &trans  &kp GRAVE  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
+&kp LSHFT  &trans  &trans  &trans      &trans  &cmd_grave  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
 &trans     &trans  &trans  &bt BT_CLR  &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
             >;
 

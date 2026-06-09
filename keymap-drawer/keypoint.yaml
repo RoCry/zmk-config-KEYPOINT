@@ -52,7 +52,7 @@ layers:
   - {t: SPACE, h: LOWER}
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
-  - RALT
+  - {t: RALT, h: Meh+LGUI}
   - ''
   - {t: LEFT, h: LOWER}
   - {t: DOWN, h: SYMBOL}
@@ -89,7 +89,7 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - '`'
+  - '&cmd_grave'
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - '&bl BL_DEC'
@@ -285,3 +285,7 @@ layers:
   - ''
   - ''
   - ''
+combos:
+- p: [20, 21]
+  k: '&cmd_space'
+  l: [QWERTY]

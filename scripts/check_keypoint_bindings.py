@@ -4,9 +4,8 @@
 # dependencies = []
 # ///
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 KEYMAPS = [
@@ -17,6 +16,8 @@ KEYMAPS = [
 BINDING_CELLS = {
     "&bl": 1,
     "&bt": 1,
+    "&cmd_grave": 0,
+    "&cmd_space": 0,
     "&gresc": 0,
     "&kp": 1,
     "&lt": 2,
@@ -29,10 +30,20 @@ BINDING_CELLS = {
 }
 
 EXPECTED_DEFAULT_BINDINGS = {
-    18: "&mkp LCLK",      # left pointing-device click key
-    19: "&mkp LCLK",      # right pointing-device click key
-    45: "&kp C_MUTE",     # left encoder press
-    47: "&mt LGUI ESC",   # left thumb: hold Command, tap Escape
+    18: "&mkp LCLK",  # left pointing-device click key
+    19: "&mkp LCLK",  # right pointing-device click key
+    45: "&kp C_MUTE",  # left encoder press
+    47: "&mt LGUI ESC",  # left thumb: hold Command, tap Escape
+    51: "&mt LC(LA(LS(LGUI))) RALT",  # right Alt: hold Hyper, tap right Alt
+}
+
+EXPECTED_LOWER_BINDINGS = {
+    31: "&cmd_grave",  # Cmd+` window switch macro
+}
+
+EXPECTED_MACROS = {
+    "cmd_space": "bindings = <&macro_press &kp LGUI>, <&macro_tap &kp SPACE>, <&macro_release &kp LGUI>;",
+    "cmd_grave": "bindings = <&macro_press &kp LGUI>, <&macro_tap &kp GRAVE>, <&macro_release &kp LGUI>;",
 }
 
 
@@ -41,13 +52,33 @@ def strip_comments(text: str) -> str:
     return re.sub(r"//.*", "", text)
 
 
+def normalize_dts(text: str) -> str:
+    return re.sub(r"\s+", " ", strip_comments(text)).strip()
+
+
+def node_block(text: str, marker: str) -> str:
+    marker_start = text.index(marker)
+    block_start = text.index("{", marker_start)
+
+    depth = 0
+    for index, char in enumerate(text[block_start:], start=block_start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[block_start : index + 1]
+
+    raise AssertionError(f"unclosed node {marker!r}")
+
+
 def layer_bindings(text: str, layer_name: str) -> list[str]:
     marker = f"{layer_name} {{"
     layer_start = text.index(marker)
     bindings_start = text.index("bindings", layer_start)
     block_start = text.index("<", bindings_start)
     block_end = text.index(">;", block_start)
-    tokens = strip_comments(text[block_start + 1:block_end]).split()
+    tokens = strip_comments(text[block_start + 1 : block_end]).split()
 
     bindings: list[str] = []
     i = 0
@@ -73,17 +104,56 @@ def main() -> None:
     failures: list[str] = []
 
     for keymap in KEYMAPS:
-        bindings = layer_bindings(keymap.read_text(), "default_layer")
-        if len(bindings) != 56:
-            failures.append(f"{keymap}: default_layer has {len(bindings)} bindings, expected 56")
+        text = keymap.read_text()
+
+        default_bindings = layer_bindings(text, "default_layer")
+        if len(default_bindings) != 56:
+            failures.append(f"{keymap}: default_layer has {len(default_bindings)} bindings, expected 56")
             continue
 
         for index, expected in EXPECTED_DEFAULT_BINDINGS.items():
-            actual = bindings[index]
+            actual = default_bindings[index]
             if actual != expected:
-                failures.append(
-                    f"{keymap}: default_layer[{index}] is {actual!r}, expected {expected!r}"
-                )
+                failures.append(f"{keymap}: default_layer[{index}] is {actual!r}, expected {expected!r}")
+
+        lower_bindings = layer_bindings(text, "lower_layer")
+        if len(lower_bindings) != 56:
+            failures.append(f"{keymap}: lower_layer has {len(lower_bindings)} bindings, expected 56")
+            continue
+
+        for index, expected in EXPECTED_LOWER_BINDINGS.items():
+            actual = lower_bindings[index]
+            if actual != expected:
+                failures.append(f"{keymap}: lower_layer[{index}] is {actual!r}, expected {expected!r}")
+
+        for macro_name, expected_bindings in EXPECTED_MACROS.items():
+            try:
+                macro = normalize_dts(node_block(text, f"{macro_name}: {macro_name}"))
+            except ValueError:
+                failures.append(f"{keymap}: missing macro {macro_name!r}")
+                continue
+
+            if 'compatible = "zmk,behavior-macro";' not in macro:
+                failures.append(f"{keymap}: macro {macro_name!r} is not a zmk behavior macro")
+            if "#binding-cells = <0>;" not in macro:
+                failures.append(f"{keymap}: macro {macro_name!r} should take no binding cells")
+            if expected_bindings not in macro:
+                failures.append(f"{keymap}: macro {macro_name!r} should contain {expected_bindings!r}")
+
+        try:
+            combo = normalize_dts(node_block(text, "combo_hj_cmd_space"))
+        except ValueError:
+            failures.append(f"{keymap}: missing combo_hj_cmd_space")
+            continue
+
+        for expected in [
+            "timeout-ms = <50>;",
+            "key-positions = <20 21>;",
+            "bindings = <&cmd_space>;",
+            "layers = <0>;",
+        ]:
+            if expected not in combo:
+                failures.append(f"{keymap}: combo_hj_cmd_space should contain {expected!r}")
 
     if failures:
         raise SystemExit("\n".join(failures))
