@@ -9,6 +9,7 @@
 #include <zmk/endpoints.h>
 
 #define CANVAS_SIZE 72
+#define KEYPOINT_STATUS_PROFILE_COUNT 4
 
 #define LVGL_BACKGROUND                                                                            \
     IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? lv_color_black() : lv_color_white()
@@ -23,6 +24,8 @@ struct status_state {
     int active_profile_index;
     bool active_profile_connected;
     bool active_profile_bonded;
+    bool profile_connected[KEYPOINT_STATUS_PROFILE_COUNT];
+    bool profile_bonded[KEYPOINT_STATUS_PROFILE_COUNT];
     uint8_t layer_index;
     const char *layer_label;
 #else

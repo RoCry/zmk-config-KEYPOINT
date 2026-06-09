@@ -89,6 +89,37 @@ def test_status_uses_live_data_instead_of_wpm_chart() -> None:
     assert "select ZMK_WPM" not in kconfig
 
 
+def test_status_tracks_each_ble_profile_state() -> None:
+    text = STATUS_C.read_text()
+    util = UTIL_H.read_text()
+
+    assert "#define KEYPOINT_STATUS_PROFILE_COUNT 4" in util
+    assert "profile_connected[KEYPOINT_STATUS_PROFILE_COUNT]" in util
+    assert "profile_bonded[KEYPOINT_STATUS_PROFILE_COUNT]" in util
+    assert "profile_connected[KEYPOINT_STATUS_PROFILE_COUNT]" in text
+    assert "profile_bonded[KEYPOINT_STATUS_PROFILE_COUNT]" in text
+    assert "for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++)" in text
+    assert "zmk_ble_profile_is_connected(i)" in text
+    assert "!zmk_ble_profile_is_open(i)" in text
+
+
+def test_status_uses_compact_profile_grid_and_layer_chip() -> None:
+    text = STATUS_C.read_text()
+
+    middle_start = text.index("static void draw_middle(")
+    middle_end = text.index("static void draw_bottom(", middle_start)
+    middle = text[middle_start:middle_end]
+    bottom_start = text.index("static void draw_bottom(")
+    bottom_end = text.index("static void set_battery_status(", bottom_start)
+    bottom = text[bottom_start:bottom_end]
+
+    assert "draw_profile_grid(" in middle
+    assert "draw_profile_slot(" in text
+    assert "lv_canvas_draw_arc(" not in middle
+    assert "draw_layer_chip(" in bottom
+    assert 'return "BASE";' in text
+
+
 def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
     text = STATUS_C.read_text()
 

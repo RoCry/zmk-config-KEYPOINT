@@ -33,6 +33,8 @@ struct output_status_state {
     int active_profile_index;
     bool active_profile_connected;
     bool active_profile_bonded;
+    bool profile_connected[KEYPOINT_STATUS_PROFILE_COUNT];
+    bool profile_bonded[KEYPOINT_STATUS_PROFILE_COUNT];
 };
 
 struct layer_status_state {
@@ -221,6 +223,79 @@ void keypoint_live_data_refresh_displays(void) {
     }
 }
 
+static void draw_rect_outline(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t width,
+                              lv_coord_t height, const lv_draw_rect_dsc_t *rect_dsc) {
+    lv_canvas_draw_rect(canvas, x, y, width, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, y + height - 1, width, 1, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, y, 1, height, rect_dsc);
+    lv_canvas_draw_rect(canvas, x + width - 1, y, 1, height, rect_dsc);
+}
+
+static void draw_plus_marker(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
+                             const lv_draw_rect_dsc_t *rect_dsc) {
+    lv_canvas_draw_rect(canvas, x + 2, y, 1, 5, rect_dsc);
+    lv_canvas_draw_rect(canvas, x, y + 2, 5, 1, rect_dsc);
+}
+
+static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state, uint8_t index,
+                              lv_coord_t x, lv_coord_t y,
+                              const lv_draw_rect_dsc_t *foreground_rect_dsc,
+                              const lv_draw_rect_dsc_t *background_rect_dsc,
+                              const lv_draw_label_dsc_t *foreground_label_dsc,
+                              const lv_draw_label_dsc_t *background_label_dsc) {
+    const bool active = index == state->active_profile_index;
+    const bool connected = state->profile_connected[index];
+    const bool bonded = state->profile_bonded[index];
+    const lv_draw_rect_dsc_t *status_rect_dsc = active ? background_rect_dsc : foreground_rect_dsc;
+    char label[2];
+
+    if (active) {
+        lv_canvas_draw_rect(canvas, x, y, 29, 23, foreground_rect_dsc);
+    } else if (bonded) {
+        draw_rect_outline(canvas, x, y, 29, 23, foreground_rect_dsc);
+    } else {
+        lv_canvas_draw_rect(canvas, x, y, 7, 1, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x, y, 1, 7, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x + 22, y, 7, 1, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x + 28, y, 1, 7, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x, y + 22, 7, 1, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x, y + 16, 1, 7, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x + 22, y + 22, 7, 1, foreground_rect_dsc);
+        lv_canvas_draw_rect(canvas, x + 28, y + 16, 1, 7, foreground_rect_dsc);
+    }
+
+    snprintk(label, sizeof(label), "%u", index + 1);
+    lv_canvas_draw_text(canvas, x + 2, y + 2, 16, active ? background_label_dsc : foreground_label_dsc,
+                        label);
+
+    if (connected) {
+        lv_canvas_draw_rect(canvas, x + 21, y + 7, 5, 5, status_rect_dsc);
+    } else if (bonded) {
+        draw_rect_outline(canvas, x + 21, y + 7, 5, 5, status_rect_dsc);
+    } else {
+        draw_plus_marker(canvas, x + 21, y + 7, status_rect_dsc);
+    }
+}
+
+static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state,
+                              const lv_draw_rect_dsc_t *foreground_rect_dsc,
+                              const lv_draw_rect_dsc_t *background_rect_dsc,
+                              const lv_draw_label_dsc_t *foreground_label_dsc,
+                              const lv_draw_label_dsc_t *background_label_dsc) {
+    static const lv_coord_t slot_offsets[KEYPOINT_STATUS_PROFILE_COUNT][2] = {
+        {4, 8},
+        {39, 8},
+        {4, 41},
+        {39, 41},
+    };
+
+    for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
+        draw_profile_slot(canvas, state, i, slot_offsets[i][0], slot_offsets[i][1],
+                          foreground_rect_dsc, background_rect_dsc, foreground_label_dsc,
+                          background_label_dsc);
+    }
+}
+
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
     lv_obj_t *canvas = lv_obj_get_child(widget, 1);
 
@@ -228,44 +303,41 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     lv_draw_rect_dsc_t rect_white_dsc;
     init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
-    lv_draw_arc_dsc_t arc_dsc;
-    init_arc_dsc(&arc_dsc, LVGL_FOREGROUND, 2);
-    lv_draw_arc_dsc_t arc_dsc_filled;
-    init_arc_dsc(&arc_dsc_filled, LVGL_FOREGROUND, 9);
     lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_18, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
     lv_draw_label_dsc_t label_dsc_black;
-    init_label_dsc(&label_dsc_black, LVGL_BACKGROUND, &lv_font_montserrat_18, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_black, LVGL_BACKGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
 
-    // 填充背景
+    // Fill background.
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
-
-    // 调整后四个圆位置：整体下移 5 像素
-    int circle_offsets[4][2] = {
-        {18, 15}, // 原18,18 -> y+5
-        {50, 15}, // 原50,18 -> y+5
-        {18, 46}, // 原18,50 -> y+5
-        {50, 46}, // 原50,50 -> y+5
-    };
-
-    for (int i = 0; i < 4; i++) {
-        bool selected = i == state->active_profile_index;
-
-        lv_canvas_draw_arc(canvas, circle_offsets[i][0], circle_offsets[i][1], 13, 0, 360,
-                           &arc_dsc);
-
-        if (selected) {
-            lv_canvas_draw_arc(canvas, circle_offsets[i][0], circle_offsets[i][1], 9, 0, 359,
-                               &arc_dsc_filled);
-        }
-
-        char label[2];
-        snprintf(label, sizeof(label), "%d", i + 1);
-        lv_canvas_draw_text(canvas, circle_offsets[i][0] - 8, circle_offsets[i][1] - 10, 16,
-                            (selected ? &label_dsc_black : &label_dsc), label);
-    }
+    draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &label_dsc,
+                      &label_dsc_black);
 
     rotate_canvas(canvas, cbuf);
+}
+
+static const char *layer_chip_text(const struct status_state *state, char *fallback,
+                                   size_t fallback_size) {
+    if (state->layer_index == 0) {
+        return "BASE";
+    }
+
+    if (state->layer_label != NULL) {
+        return state->layer_label;
+    }
+
+    snprintk(fallback, fallback_size, "LAYER %u", state->layer_index);
+    return fallback;
+}
+
+static void draw_layer_chip(lv_obj_t *canvas, const struct status_state *state,
+                            const lv_draw_rect_dsc_t *rect_dsc,
+                            const lv_draw_label_dsc_t *label_dsc) {
+    char fallback[10] = {};
+    const char *label = layer_chip_text(state, fallback, sizeof(fallback));
+
+    draw_rect_outline(canvas, 2, 20, 68, 28, rect_dsc);
+    lv_canvas_draw_text(canvas, 4, 24, 64, label_dsc, label);
 }
 
 static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -273,22 +345,15 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
 
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
+    lv_draw_rect_dsc_t rect_white_dsc;
+    init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
     lv_draw_label_dsc_t label_dsc;
     init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
 
-    // Draw layer
-    if (state->layer_label == NULL) {
-        char text[10] = {};
-
-        sprintf(text, "LAYER %i", state->layer_index);
-
-        lv_canvas_draw_text(canvas, 0, 0, 72, &label_dsc, text);
-    } else {
-        lv_canvas_draw_text(canvas, 0, 0, 72, &label_dsc, state->layer_label);
-    }
+    draw_layer_chip(canvas, state, &rect_white_dsc, &label_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
@@ -335,6 +400,10 @@ static void set_output_status(struct zmk_widget_status *widget,
     widget->state.active_profile_index = state->active_profile_index;
     widget->state.active_profile_connected = state->active_profile_connected;
     widget->state.active_profile_bonded = state->active_profile_bonded;
+    for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
+        widget->state.profile_connected[i] = state->profile_connected[i];
+        widget->state.profile_bonded[i] = state->profile_bonded[i];
+    }
 
     draw_top(widget->obj, widget->cbuf, &widget->state);
     draw_middle(widget->obj, widget->cbuf2, &widget->state);
@@ -346,12 +415,19 @@ static void output_status_update_cb(struct output_status_state state) {
 }
 
 static struct output_status_state output_status_get_state(const zmk_event_t *_eh) {
-    return (struct output_status_state){
+    struct output_status_state state = {
         .selected_endpoint = zmk_endpoints_selected(),
         .active_profile_index = zmk_ble_active_profile_index(),
         .active_profile_connected = zmk_ble_active_profile_is_connected(),
         .active_profile_bonded = !zmk_ble_active_profile_is_open(),
     };
+
+    for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
+        state.profile_connected[i] = zmk_ble_profile_is_connected(i);
+        state.profile_bonded[i] = !zmk_ble_profile_is_open(i);
+    }
+
+    return state;
 }
 
 ZMK_DISPLAY_WIDGET_LISTENER(widget_output_status, struct output_status_state,
