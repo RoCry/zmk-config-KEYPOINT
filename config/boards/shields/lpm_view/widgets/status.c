@@ -120,34 +120,34 @@ static void draw_live_data_health_strip(lv_obj_t *canvas,
                         KEYPOINT_LIVE_HEALTH_WIDTH, KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
 }
 
+/* LV_COLOR_DEPTH=1 cannot dim stale data (blending is a >50% opacity
+ * threshold), so live data always renders at full contrast; staleness is
+ * signaled by the segmented health strip on the middle canvas instead. */
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
-                                 const lv_draw_line_dsc_t *divider_dsc,
                                  const lv_draw_rect_dsc_t *icon_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
-    lv_draw_label_dsc_t live_label_dsc = *label_dsc;
-    lv_draw_line_dsc_t live_divider_dsc = *divider_dsc;
-    lv_draw_rect_dsc_t live_icon_dsc = *icon_dsc;
 
-    if (snapshot.stale) {
-        live_label_dsc.opa = LV_OPA_50;
-        live_divider_dsc.opa = LV_OPA_50;
-        live_icon_dsc.bg_opa = LV_OPA_50;
-    }
+    draw_live_data_icon(canvas, snapshot.icon, icon_dsc);
 
-    draw_live_data_icon(canvas, snapshot.icon, &live_icon_dsc);
-
-    for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
+    for (int i = 0; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++) {
         lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
                             KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
-                            KEYPOINT_LIVE_TEXT_WIDTH, &live_label_dsc, snapshot.lines[i]);
+                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, snapshot.lines[i]);
+    }
+}
+
+static void draw_live_data_extra(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
+                                 const lv_draw_rect_dsc_t *rect_dsc) {
+    struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
+
+    for (int i = KEYPOINT_LIVE_TOP_LINE_COUNT; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
+        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
+                            KEYPOINT_LIVE_EXTRA_TEXT_Y +
+                                ((i - KEYPOINT_LIVE_TOP_LINE_COUNT) * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
+                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, snapshot.lines[i]);
     }
 
-    lv_point_t divider_points[] = {
-        {0, KEYPOINT_LIVE_DIVIDER_Y},
-        {KEYPOINT_LIVE_DIVIDER_WIDTH, KEYPOINT_LIVE_DIVIDER_Y},
-    };
-    lv_canvas_draw_line(canvas, divider_points, 2, &live_divider_dsc);
-    draw_live_data_health_strip(canvas, &snapshot, &live_icon_dsc);
+    draw_live_data_health_strip(canvas, &snapshot, rect_dsc);
 }
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -159,8 +159,6 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_label_dsc(&label_dsc_wpm, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_RIGHT);
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-    lv_draw_line_dsc_t line_dsc;
-    init_line_dsc(&line_dsc, LVGL_FOREGROUND, 1);
     lv_draw_rect_dsc_t icon_dsc;
     init_rect_dsc(&icon_dsc, LVGL_FOREGROUND);
 
@@ -192,17 +190,10 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, output_text);
 
-    draw_live_data_panel(canvas, &label_dsc_wpm, &line_dsc, &icon_dsc);
+    draw_live_data_panel(canvas, &label_dsc_wpm, &icon_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
-}
-
-void keypoint_live_data_refresh_displays(void) {
-    struct zmk_widget_status *widget;
-    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
-        draw_top(widget->obj, widget->cbuf, &widget->state);
-    }
 }
 
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -212,6 +203,8 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     lv_draw_rect_dsc_t rect_white_dsc;
     init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
+    lv_draw_label_dsc_t live_label_dsc;
+    init_label_dsc(&live_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_RIGHT);
     lv_draw_label_dsc_t profile_label_dsc;
     init_label_dsc(&profile_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_LEFT);
     lv_draw_label_dsc_t profile_label_dsc_black;
@@ -222,11 +215,20 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
 
     // Fill background.
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
+    draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc);
     draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &profile_label_dsc,
                       &profile_label_dsc_black);
     draw_layer_info(canvas, state, &layer_label_dsc);
 
     rotate_canvas(canvas, cbuf);
+}
+
+void keypoint_live_data_refresh_displays(void) {
+    struct zmk_widget_status *widget;
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+        draw_top(widget->obj, widget->cbuf, &widget->state);
+        draw_middle(widget->obj, widget->cbuf2, &widget->state);
+    }
 }
 
 static void set_battery_status(struct zmk_widget_status *widget,

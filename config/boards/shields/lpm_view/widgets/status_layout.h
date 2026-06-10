@@ -15,10 +15,15 @@
 #define KEYPOINT_LIVE_TEXT_Y 18
 #define KEYPOINT_LIVE_TEXT_WIDTH 67
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
-#define KEYPOINT_LIVE_DIVIDER_Y 67
-#define KEYPOINT_LIVE_DIVIDER_WIDTH 70
+
+/* Live-data lines 1..KEYPOINT_LIVE_TOP_LINE_COUNT render on the top canvas;
+ * the remaining lines and the health strip render on the middle (profile)
+ * canvas, above the profile row. Canvas rows >= 66 never reach the glass
+ * (middle-canvas overlap + rotate_canvas clipping), so keep content above. */
+#define KEYPOINT_LIVE_TOP_LINE_COUNT 3
+#define KEYPOINT_LIVE_EXTRA_TEXT_Y 2
 #define KEYPOINT_LIVE_HEALTH_X 2
-#define KEYPOINT_LIVE_HEALTH_Y 70
+#define KEYPOINT_LIVE_HEALTH_Y 38
 #define KEYPOINT_LIVE_HEALTH_WIDTH 68
 #define KEYPOINT_LIVE_HEALTH_HEIGHT 2
 

@@ -8,17 +8,18 @@
 Simulates the firmware rendering pipeline instead of approximating it:
 
   status.c draw_top/draw_middle (two logical 72x72 canvases: battery +
-  endpoint symbol + live-data panel, BLE profile grid + layer info)
+  endpoint symbol + live lines 1-3 + icon, then live lines 4-6 + health
+  strip + BLE profile grid + layer info)
     -> LVGL 1-bit blending (LV_COLOR_DEPTH=1 turns opacity into a >50%
-       threshold, so the stale LV_OPA_50 style is INVISIBLE on hardware)
+       threshold, which is why the firmware never dims stale data and
+       signals staleness via the segmented health strip instead)
     -> util.c rotate_canvas (LVGL v8 fixed-point -90 deg transform with its
        resampling artifacts: row/col 36 doubled, last row/col dropped)
     -> 144x72 LVGL screen composition (the middle canvas overlaps the top
-       canvas' last 4 columns, so the live panel's divider and health strip
-       never reach the glass)
+       canvas' last 4 columns; canvas rows >= 66 never reach the glass)
     -> lpm009m360a rotation=1 panel mapping: the visible 72x144 portrait
-       image (top block: battery/output/live data, bottom block: profiles
-       + layer).
+       image (top block: battery/output/live lines 1-3/icon, bottom block:
+       live lines 4-6, health strip, profiles + layer).
 
 Icon bitmaps, layout constants and the KP2 live-data contract are parsed
 from the firmware sources so the preview cannot drift from them. The LVGL
@@ -44,8 +45,6 @@ from keypoint_lvgl_sim import (  # noqa: E402
     BLACK,
     FONT_MONTSERRAT_16,
     FONT_UNSCII_8,
-    LV_OPA_50,
-    LV_OPA_COVER,
     WHITE,
     Canvas,
     Indexed2BitImage,
@@ -232,7 +231,8 @@ def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapsh
     """keypoint_live_data_snapshot_get(): WARN/NO DATA before the first frame,
     stale keeps the last payload (which 1-bit rendering then hides)."""
     if frame is None:
-        return LiveDataSnapshot("WARN", ("NO DATA", "WAITING", ""), has_data=False, stale=False)
+        lines = ("NO DATA", "WAITING") + ("",) * (LIVE_LINE_COUNT - 2)
+        return LiveDataSnapshot("WARN", lines, has_data=False, stale=False)
     icon, lines = parse_live_frame(frame)
     return LiveDataSnapshot(icon, lines, has_data=True, stale=stale)
 
@@ -283,11 +283,22 @@ def output_symbol(state: StatusState) -> str:
     return SYMBOL_SETTINGS
 
 
-def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
-    # Stale style is LV_OPA_50 in status.c; at LV_COLOR_DEPTH=1 that means the
-    # whole panel (icon, text, divider, health strip) disappears on hardware.
-    opa = LV_OPA_50 if snapshot.stale else LV_OPA_COVER
+def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
+    canvas.draw_text(
+        LAYOUT["KEYPOINT_LIVE_TEXT_X"],
+        y,
+        LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
+        FONT_UNSCII_8,
+        line,
+        align="right",
+    )
 
+
+def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
+    """Top-canvas part of the live panel: icon + lines 1..TOP_LINE_COUNT.
+
+    Stale data stays at full contrast: LV_COLOR_DEPTH=1 cannot dim, so the
+    firmware signals staleness via the segmented health strip instead."""
     if snapshot.icon != "NONE":
         for row, bits in enumerate(ICONS[snapshot.icon]):
             for col, bit in enumerate(bits):
@@ -298,33 +309,30 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
                         1,
                         1,
                         BLACK,
-                        opa,
                     )
 
-    for index, line in enumerate(snapshot.lines):
-        canvas.draw_text(
-            LAYOUT["KEYPOINT_LIVE_TEXT_X"],
-            LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"],
-            LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
-            FONT_UNSCII_8,
-            line,
-            align="right",
-            opa=opa,
-        )
+    for index, line in enumerate(snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
+        _draw_live_line(canvas, line, LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"])
 
-    canvas.hline(0, LAYOUT["KEYPOINT_LIVE_DIVIDER_WIDTH"], LAYOUT["KEYPOINT_LIVE_DIVIDER_Y"], BLACK, opa)
+
+def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
+    """Middle-canvas part of the live panel: lines TOP_LINE_COUNT+1.. + health strip."""
+    for index, line in enumerate(snapshot.lines[LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"] :]):
+        _draw_live_line(
+            canvas, line, LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+        )
 
     # Health strip geometry from status.c draw_live_data_health_strip().
     health_y = LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
     health_h = LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
     if not snapshot.has_data:
-        canvas.fill_rect(30, health_y, 13, health_h, BLACK, opa)
+        canvas.fill_rect(30, health_y, 13, health_h, BLACK)
     elif snapshot.stale:
         for segment_x in (2, 18, 34, 50, 64):
-            canvas.fill_rect(segment_x, health_y, 6, health_h, BLACK, opa)
+            canvas.fill_rect(segment_x, health_y, 6, health_h, BLACK)
     else:
         canvas.fill_rect(
-            LAYOUT["KEYPOINT_LIVE_HEALTH_X"], health_y, LAYOUT["KEYPOINT_LIVE_HEALTH_WIDTH"], health_h, BLACK, opa
+            LAYOUT["KEYPOINT_LIVE_HEALTH_X"], health_y, LAYOUT["KEYPOINT_LIVE_HEALTH_WIDTH"], health_h, BLACK
         )
 
 
@@ -394,8 +402,9 @@ def layer_info_text(state: StatusState) -> str:
     return f"L{state.layer_index}"
 
 
-def draw_middle(state: StatusState) -> Canvas:
+def draw_middle(state: StatusState, snapshot: LiveDataSnapshot) -> Canvas:
     canvas = Canvas(CANVAS_SIZE)
+    draw_live_data_extra(canvas, snapshot)
     for index, (x, y) in enumerate(PROFILE_SLOT_ORIGINS):
         _draw_profile_slot(canvas, state, index, x, y)
     canvas.draw_text(
@@ -419,7 +428,7 @@ def render_lvgl_screen(state: StatusState, snapshot: LiveDataSnapshot) -> Image.
     opaque sibling drawn over the top canvas' last 4 columns."""
     screen = Image.new("L", (LVGL_SCREEN_WIDTH, LVGL_SCREEN_HEIGHT), WHITE)
     screen.paste(rotate_canvas(draw_top(state, snapshot)).image, (0, 0))
-    screen.paste(rotate_canvas(draw_middle(state)).image, (MIDDLE_CANVAS_X, 0))
+    screen.paste(rotate_canvas(draw_middle(state, snapshot)).image, (MIDDLE_CANVAS_X, 0))
     return screen
 
 
@@ -460,25 +469,31 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
     PreviewCase(
         name="rt_sun_base",
         state=StatusState(85, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame="KP2|SUN|SUNNY|TMP 24C|12:00",
+        frame="KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",
     ),
     PreviewCase(
         name="rt_claude_usb_charging",
         state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
-        frame="KP2|CLAUDE|CLAUDE|TOK 81%|14:32",
+        frame="KP2|CLAUDE|CLAUDE|TOK 81%|14:32|5H 22%|WK 41%|OPUS 4.8",
     ),
     PreviewCase(
-        # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; the stale
-        # live panel is blank on hardware (LV_OPA_50 at 1-bit depth).
+        # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; stale data
+        # stays readable, the segmented health strip flags the staleness.
         name="rt_codex_stale",
         state=StatusState(72, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame="KP2|CODEX|CODEX|7D 45%|09:30",
+        frame="KP2|CODEX|CODEX|7D 45%|09:30|5H 58%|RST 3H|",
         stale=True,
     ),
     PreviewCase(
         name="rt_rain_max_width",
         state=StatusState(100, True, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 7),
-        frame="KP2|RAIN|RAIN 8MM|WIND 12M|18:05:33",
+        frame="KP2|RAIN|RAIN 8MM|WIND 12M|18:05:33|GUST 19M|HUM 93%|VIS 2KM",
+    ),
+    PreviewCase(
+        # Only 3 of 6 lines used -> the extra block stays empty.
+        name="rt_temp_short",
+        state=StatusState(64, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame="KP2|TEMP|OUT 19C|IN  25C|22:10|||",
     ),
     PreviewCase(
         # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever

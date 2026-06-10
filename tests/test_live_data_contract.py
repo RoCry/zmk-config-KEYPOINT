@@ -46,7 +46,7 @@ def test_bootloader_shortcuts_are_on_requested_layer_positions() -> None:
 def test_live_data_firmware_contract_constants() -> None:
     text = LIVE_DATA_H.read_text()
 
-    assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 3" in text
+    assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 6" in text
     assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 8" in text
     assert "#define KEYPOINT_LIVE_DATA_ICON_MAX 8" in text
     assert "#define KEYPOINT_LIVE_DATA_STALE_MS 360000" in text
@@ -147,16 +147,30 @@ def test_status_does_not_overpaint_layer_info_with_third_canvas() -> None:
     assert "lv_canvas_set_buffer(bottom" not in text
 
 
-def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
+def test_live_data_splits_lines_between_top_and_middle_canvas() -> None:
     text = STATUS_C.read_text()
+    layout = STATUS_LAYOUT_H.read_text()
 
-    panel_start = text.index("static void draw_live_data_panel(")
-    panel_end = text.index("static void draw_top(", panel_start)
-    panel = text[panel_start:panel_end]
+    # Lines 1..TOP render on the top canvas; the rest + health strip render on
+    # the middle (profile) canvas. The old bottom divider is gone: canvas rows
+    # >= 66 never reach the glass, so it was invisible on hardware.
+    assert "#define KEYPOINT_LIVE_TOP_LINE_COUNT 3" in layout
+    assert "#define KEYPOINT_LIVE_EXTRA_TEXT_Y" in layout
+    assert "KEYPOINT_LIVE_DIVIDER" not in layout
+    assert "static void draw_live_data_extra(" in text
+    assert "draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc);" in text
+    assert "lv_canvas_draw_line(" not in text
 
-    assert "lv_canvas_draw_rect(" not in panel
-    assert "lv_canvas_draw_line(" in panel
-    assert "init_line_dsc(" in text
+    middle_start = text.index("static void draw_middle(")
+    middle_end = text.index("void keypoint_live_data_refresh_displays(", middle_start)
+    middle = text[middle_start:middle_end]
+    assert "draw_live_data_extra(" in middle
+
+    refresh_start = text.index("void keypoint_live_data_refresh_displays(")
+    refresh_end = text.index("static void set_battery_status(", refresh_start)
+    refresh = text[refresh_start:refresh_end]
+    assert "draw_top(widget->obj, widget->cbuf, &widget->state);" in refresh
+    assert "draw_middle(widget->obj, widget->cbuf2, &widget->state);" in refresh
 
 
 def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> None:
@@ -166,7 +180,8 @@ def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> 
     for name in (
         "KEYPOINT_LIVE_TEXT_X",
         "KEYPOINT_LIVE_TEXT_Y",
-        "KEYPOINT_LIVE_DIVIDER_Y",
+        "KEYPOINT_LIVE_TOP_LINE_COUNT",
+        "KEYPOINT_LIVE_EXTRA_TEXT_Y",
         "KEYPOINT_LIVE_HEALTH_Y",
         "KEYPOINT_PROFILE_SLOT_WIDTH",
         "KEYPOINT_PROFILE_SLOT_HEIGHT",
@@ -219,16 +234,19 @@ def test_live_data_panel_draws_health_strip() -> None:
     assert "KEYPOINT_LIVE_HEALTH_Y" in text
 
 
-def test_live_data_panel_dims_stale_snapshot() -> None:
+def test_live_data_stale_uses_segments_not_opacity() -> None:
     text = STATUS_C.read_text()
 
-    panel_start = text.index("static void draw_live_data_panel(")
-    panel_end = text.index("static void draw_top(", panel_start)
-    panel = text[panel_start:panel_end]
+    # LV_COLOR_DEPTH=1 blending is a >50% threshold, so LV_OPA_50 dimming
+    # would hide stale data entirely; staleness must be signaled by the
+    # segmented health strip at full contrast instead.
+    assert "LV_OPA_50" not in text
 
-    assert "snapshot.stale" in panel
-    assert "LV_OPA_50" in panel
-    assert ".opa" in panel
+    strip_start = text.index("static void draw_live_data_health_strip(")
+    strip_end = text.index("static void draw_live_data_panel(", strip_start)
+    strip = text[strip_start:strip_end]
+    assert "snapshot->stale" in strip
+    assert "segment_x" in strip
 
 
 def test_live_data_icon_does_not_reduce_text_width() -> None:
@@ -290,7 +308,7 @@ def test_live_data_stale_keeps_last_payload_text() -> None:
 def test_demo_sender_uses_same_limits() -> None:
     text = SENDER.read_text()
 
-    assert "TEXT_LINE_COUNT = 3" in text
+    assert "TEXT_LINE_COUNT = 6" in text
     assert "LINE_MAX = 8" in text
     assert "ICON_IDS" in text
     assert 'PREFIX = "KP2|"' in text

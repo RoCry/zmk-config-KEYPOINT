@@ -25,7 +25,7 @@ SERVICE_UUID = "f5d40000-6d2f-4f4b-9b2a-2f4a8e8c0001"
 CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"
 PREFIX = "KP2|"
 ICON_MAX = 8
-TEXT_LINE_COUNT = 3
+TEXT_LINE_COUNT = 6
 LINE_MAX = 8
 ICON_IDS = frozenset(
     {
@@ -45,30 +45,37 @@ ICON_IDS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class DemoSource:
+    """Lines 1-2 + data_time fill the top canvas; extra1-3 fill the middle canvas."""
+
     icon: str
     line1: str
     line2: str
+    extra1: str = ""
+    extra2: str = ""
+    extra3: str = ""
 
 
 DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
-    DemoSource(icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH"),
-    DemoSource(icon="SUN", line1="SUNNY", line2="TMP 24C"),
-    DemoSource(icon="SUN", line1="UV HI", line2="AQI 42"),
-    DemoSource(icon="CLOUD", line1="CLOUDY", line2="HUM 62%"),
+    DemoSource(
+        icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH", extra1="12345678", extra2="IJKLMNOP", extra3="87654321"
+    ),
+    DemoSource(icon="SUN", line1="SUNNY", line2="TMP 24C", extra1="UV 5", extra2="HUM 40%", extra3="AQI 42"),
+    DemoSource(icon="SUN", line1="UV HI", line2="AQI 42", extra1="TMP 31C"),
+    DemoSource(icon="CLOUD", line1="CLOUDY", line2="HUM 62%", extra1="PM2 035", extra2="VIS 8KM"),
     DemoSource(icon="CLOUD", line1="PM2 035", line2="VIS 8KM"),
-    DemoSource(icon="RAIN", line1="RAIN", line2="WIND 3M"),
-    DemoSource(icon="RAIN", line1="RAIN 8MM", line2="WIND 12"),
+    DemoSource(icon="RAIN", line1="RAIN", line2="WIND 3M", extra1="RAIN 2MM", extra2="HUM 88%"),
+    DemoSource(icon="RAIN", line1="RAIN 8MM", line2="WIND 12", extra1="GUST 19M", extra2="HUM 93%", extra3="VIS 2KM"),
     DemoSource(icon="TEMP", line1="TEMP", line2="24C"),
-    DemoSource(icon="TEMP", line1="OUT 19C", line2="IN  25C"),
-    DemoSource(icon="WARN", line1="WARN", line2="AQI 142"),
+    DemoSource(icon="TEMP", line1="OUT 19C", line2="IN  25C", extra1="FEELS17C"),
+    DemoSource(icon="WARN", line1="WARN", line2="AQI 142", extra1="PM2 089", extra2="MASK ON"),
     DemoSource(icon="WARN", line1="LOW BATT", line2="CHG SOON"),
-    DemoSource(icon="CODE", line1="BUILD OK", line2="READY"),
-    DemoSource(icon="CODE", line1="CI PASS", line2="22 TESTS"),
+    DemoSource(icon="CODE", line1="BUILD OK", line2="READY", extra1="MAIN", extra2="3M 12S"),
+    DemoSource(icon="CODE", line1="CI PASS", line2="22 TESTS", extra1="COV 87%"),
     DemoSource(icon="TIME", line1="TIME", line2="LOCAL"),
-    DemoSource(icon="TIME", line1="TZ  UTC8", line2="SYNC OK"),
-    DemoSource(icon="CODEX", line1="CODEX", line2="5h 58%"),
+    DemoSource(icon="TIME", line1="TZ  UTC8", line2="SYNC OK", extra1="NTP OK"),
+    DemoSource(icon="CODEX", line1="CODEX", line2="5h 58%", extra1="7D 45%", extra2="RST 3H"),
     DemoSource(icon="CODEX", line1="7D 45%", line2="3D 12H"),
-    DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE"),
+    DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE", extra1="5H 22%", extra2="WK 41%", extra3="OPUS 4.8"),
     DemoSource(icon="CLAUDE", line1="TOK 81%", line2="CTX OK"),
 )
 
@@ -84,7 +91,14 @@ def random_none_source(rng: random.Random) -> DemoSource:
 
 
 def random_sun_source(rng: random.Random) -> DemoSource:
-    return DemoSource(icon="SUN", line1=rng.choice(("SUNNY", "UV HI")), line2=f"TMP {rng.randint(18, 35):02d}C")
+    return DemoSource(
+        icon="SUN",
+        line1=rng.choice(("SUNNY", "UV HI")),
+        line2=f"TMP {rng.randint(18, 35):02d}C",
+        extra1=f"UV {rng.randint(1, 9)}",
+        extra2=f"HUM {rng.randint(20, 60):02d}%",
+        extra3=f"AQI {rng.randint(10, 99):02d}",
+    )
 
 
 def random_cloud_source(rng: random.Random) -> DemoSource:
@@ -92,7 +106,13 @@ def random_cloud_source(rng: random.Random) -> DemoSource:
 
 
 def random_rain_source(rng: random.Random) -> DemoSource:
-    return DemoSource(icon="RAIN", line1=f"RN {rng.randint(1, 18):02d}MM", line2=f"WND {rng.randint(1, 18):02d}M")
+    return DemoSource(
+        icon="RAIN",
+        line1=f"RN {rng.randint(1, 18):02d}MM",
+        line2=f"WND {rng.randint(1, 18):02d}M",
+        extra1=f"HUM {rng.randint(70, 99):02d}%",
+        extra2=f"VIS {rng.randint(1, 9)}KM",
+    )
 
 
 def random_temp_source(rng: random.Random) -> DemoSource:
@@ -122,13 +142,21 @@ def random_codex_source(rng: random.Random) -> DemoSource:
         icon="CODEX",
         line1=f"{rng.randint(1, 7)}D {rng.randint(10, 99)}%",
         line2=f"CTX {rng.randint(10, 99)}%",
+        extra1=f"5H {rng.randint(10, 99)}%",
+        extra2=f"RST {rng.randint(1, 9)}H",
     )
 
 
 def random_claude_source(rng: random.Random) -> DemoSource:
     if rng.choice((True, False)):
         return DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE")
-    return DemoSource(icon="CLAUDE", line1=f"TOK {rng.randint(10, 99)}%", line2=f"CTX {rng.randint(10, 99)}%")
+    return DemoSource(
+        icon="CLAUDE",
+        line1=f"TOK {rng.randint(10, 99)}%",
+        line2=f"CTX {rng.randint(10, 99)}%",
+        extra1=f"5H {rng.randint(10, 99)}%",
+        extra2=f"WK {rng.randint(10, 99)}%",
+    )
 
 
 DEMO_GENERATORS: tuple[DemoGenerator, ...] = (
@@ -195,8 +223,8 @@ def build_frame(icon: str, lines: Sequence[str]) -> bytes:
     return f"{PREFIX}{icon}|{'|'.join(lines)}".encode("ascii")
 
 
-def lines_for_source(source: DemoSource, data_time: str) -> tuple[str, str, str]:
-    return (source.line1, source.line2, data_time)
+def lines_for_source(source: DemoSource, data_time: str) -> tuple[str, str, str, str, str, str]:
+    return (source.line1, source.line2, data_time, source.extra1, source.extra2, source.extra3)
 
 
 async def resolve_connected_macos_device(name: str) -> BLEDevice | None:

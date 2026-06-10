@@ -20,7 +20,7 @@ def load_module():
 
 preview = load_module()
 
-FRESH_FRAME = "KP2|SUN|SUNNY|TMP 24C|12:00"
+FRESH_FRAME = "KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
 STATE = preview.StatusState(
     battery=85,
     charging=False,
@@ -67,23 +67,26 @@ def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
 
 
 def test_parse_live_frame_accepts_firmware_contract() -> None:
-    assert preview.parse_live_frame(FRESH_FRAME) == ("SUN", ("SUNNY", "TMP 24C", "12:00"))
-    assert preview.parse_live_frame("KP2|NONE|||") == ("NONE", ("", "", ""))
-    assert preview.parse_live_frame("KP2|CLAUDE|MAX8CHAR|ABCDEFGH|12345678") == (
+    assert preview.parse_live_frame(FRESH_FRAME) == (
+        "SUN",
+        ("SUNNY", "TMP 24C", "12:00", "UV 5", "HUM 40%", "AQI 42"),
+    )
+    assert preview.parse_live_frame("KP2|NONE||||||") == ("NONE", ("",) * 6)
+    assert preview.parse_live_frame("KP2|CLAUDE|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
         "CLAUDE",
-        ("MAX8CHAR", "ABCDEFGH", "12345678"),
+        ("MAX8CHAR", "ABCDEFGH", "12345678", "IJKLMNOP", "87654321", "QRSTUVWX"),
     )
 
 
 @pytest.mark.parametrize(
     "frame",
     [
-        "KP1|SUN|SUNNY|TMP 24C|12:00",  # wrong prefix
-        "KP2|SUN|ONLY|TWO",  # too few fields
-        "KP2|SUN|A|B|C|D",  # too many fields
-        "KP2|SUN|NINECHARS|TMP 24C|12:00",  # line longer than LINE_MAX
-        "KP2|SUN|SUNNÝ|TMP 24C|12:00",  # non-printable-ascii byte
-        "KP2|MOON|A|B|C",  # icon unknown to icon_from_field()
+        "KP1|SUN|SUNNY|TMP 24C|12:00|||",  # wrong prefix
+        "KP2|SUN|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
+        "KP2|SUN|A|B|C|D|E|F|G",  # too many fields
+        "KP2|SUN|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
+        "KP2|SUN|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
+        "KP2|MOON|A|B|C|D|E|F",  # icon unknown to icon_from_field()
     ],
 )
 def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
@@ -94,19 +97,52 @@ def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
 def test_no_data_snapshot_matches_firmware_fallback() -> None:
     snapshot = preview.live_data_snapshot(None)
     assert snapshot == preview.LiveDataSnapshot(
-        icon="WARN", lines=("NO DATA", "WAITING", ""), has_data=False, stale=False
+        icon="WARN", lines=("NO DATA", "WAITING", "", "", "", ""), has_data=False, stale=False
     )
 
 
-def test_stale_live_panel_is_invisible_at_1bit_depth() -> None:
-    # status.c dims stale data with LV_OPA_50; at LV_COLOR_DEPTH=1 LVGL's blend
-    # is a >LV_OPA_50 threshold, so the whole live panel vanishes on hardware.
-    fresh = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
-    stale = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME, stale=True)).image
+def test_live_lines_split_between_top_and_middle_canvas() -> None:
+    snapshot = preview.live_data_snapshot(FRESH_FRAME)
+    top = preview.draw_top(STATE, snapshot).image
+    middle = preview.draw_middle(STATE, snapshot).image
 
-    panel = (0, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"], preview.CANVAS_SIZE, preview.CANVAS_SIZE)
-    assert min(fresh.crop(panel).tobytes()) == preview.BLACK
-    assert min(stale.crop(panel).tobytes()) == preview.WHITE
+    line_h = preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+    top_band = (0, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"], 70, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + 3 * line_h)
+    extra_band = (
+        0,
+        preview.LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"],
+        70,
+        preview.LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"] + 3 * line_h,
+    )
+    assert min(top.crop(top_band).tobytes()) == preview.BLACK
+    assert min(middle.crop(extra_band).tobytes()) == preview.BLACK
+
+
+def test_stale_data_stays_readable_with_segmented_health_strip() -> None:
+    # LV_COLOR_DEPTH=1 cannot dim, so the firmware keeps stale text at full
+    # contrast and signals staleness via the segmented health strip.
+    fresh_snapshot = preview.live_data_snapshot(FRESH_FRAME)
+    stale_snapshot = preview.live_data_snapshot(FRESH_FRAME, stale=True)
+
+    assert (
+        preview.draw_top(STATE, stale_snapshot).image.tobytes()
+        == preview.draw_top(STATE, fresh_snapshot).image.tobytes()
+    )
+
+    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
+    fresh = preview.draw_middle(STATE, fresh_snapshot).image
+    stale = preview.draw_middle(STATE, stale_snapshot).image
+    assert fresh.getpixel((2, health_y)) == preview.BLACK
+    assert fresh.getpixel((10, health_y)) == preview.BLACK  # solid bar
+    assert stale.getpixel((2, health_y)) == preview.BLACK
+    assert stale.getpixel((10, health_y)) == preview.WHITE  # segment gap
+
+
+def test_health_strip_is_visible_on_glass() -> None:
+    glass = preview.render_left_screen(STATE, FRESH_FRAME)
+    health_row = glass_y_middle(preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"])
+    assert glass.getpixel((glass_x(2), health_row)) == preview.BLACK
+    assert glass.getpixel((glass_x(60), health_row)) == preview.BLACK
 
 
 def test_live_text_is_right_aligned_like_firmware() -> None:
@@ -150,23 +186,12 @@ def test_glass_orientation_battery_top_profiles_bottom() -> None:
     assert min(glass.crop(layer_band).tobytes()) == preview.BLACK
 
 
-def test_glass_never_shows_divider_or_health_strip() -> None:
-    snapshot = preview.live_data_snapshot(FRESH_FRAME)
-    logical = preview.draw_top(STATE, snapshot).image
-    divider_y = preview.LAYOUT["KEYPOINT_LIVE_DIVIDER_Y"]
-    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
-    assert logical.getpixel((0, divider_y)) == preview.BLACK
-    assert logical.getpixel((2, health_y)) == preview.BLACK
-
-    # The middle canvas overlaps LVGL columns 68..71 of the top canvas and the
-    # fixed-point rotation drops the last source rows, so logical rows >= 66
-    # (divider + health strip) never reach the glass: those glass rows belong
-    # to the blank top of the profile canvas.
+def test_glass_seam_rows_stay_blank() -> None:
+    # Rotation artifact (dest row 0 = background) + the blank first column of
+    # the overlapping middle canvas form a seam between the two blocks.
     glass = preview.render_left_screen(STATE, FRESH_FRAME)
-    overlap_band = (0, 68, 72, 72)
-    assert min(glass.crop(overlap_band).tobytes()) == preview.WHITE
-    # Rotation artifact: the first glass row is always background.
     assert min(glass.crop((0, 0, 72, 1)).tobytes()) == preview.WHITE
+    assert min(glass.crop((0, 68, 72, 69)).tobytes()) == preview.WHITE
 
 
 def test_rotation_duplicates_center_row_and_column() -> None:
