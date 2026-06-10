@@ -66,6 +66,17 @@ def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
                 assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
 
 
+def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "frame.png"
+        assert preview.write_frame_preview(FRESH_FRAME, output, scale=2) == output
+        with Image.open(output) as image:
+            assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
+
+        with pytest.raises(ValueError):
+            preview.write_frame_preview("KP2|SUN|TOO|FEW|FIELDS", Path(tmp) / "bad.png")
+
+
 def test_parse_live_frame_accepts_firmware_contract() -> None:
     assert preview.parse_live_frame(FRESH_FRAME) == (
         "SUN",

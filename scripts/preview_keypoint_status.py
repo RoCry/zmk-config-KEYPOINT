@@ -26,6 +26,11 @@ from the firmware sources so the preview cannot drift from them. The LVGL
 renderer behavior lives in keypoint_lvgl_sim.py; exact font glyph tables in
 keypoint_lvgl_fonts.py. RT cases feed demo KP2 frames through the same
 parser the firmware uses for the BLE GATT write.
+
+Producers: the KP2 wire protocol and line-layout conventions are documented
+in send_keypoint_live_demo.py. To check a candidate frame visually, run
+  uv run scripts/preview_keypoint_status.py --frame 'KP2|SUN|...'
+which validates it like the firmware would and renders the resulting glass.
 """
 
 import argparse
@@ -582,11 +587,25 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
     return written
 
 
+def write_frame_preview(frame: str, output: Path, scale: int = 4, stale: bool = False) -> Path:
+    """Producer helper: validate one KP2 frame and render the resulting glass."""
+    image = render_left_screen(DEMO_CASES[0].state, frame, stale=stale)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    scale_image(image, scale).save(output)
+    return output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render pixel-exact KEYPOINT left-screen (72x144 glass) previews.")
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
     parser.add_argument("--scale", type=int, default=4)
+    parser.add_argument("--frame", help="Render this single KP2 frame instead of the demo set.")
+    parser.add_argument("--stale", action="store_true", help="Render --frame in the stale state.")
     args = parser.parse_args()
+
+    if args.frame:
+        print(write_frame_preview(args.frame, args.output_dir / "left_screen_frame.png", args.scale, args.stale))
+        return
 
     for path in write_preview_set(args.output_dir, scale=args.scale):
         print(path)

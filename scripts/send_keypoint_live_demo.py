@@ -3,6 +3,41 @@
 # requires-python = ">=3.13"
 # dependencies = ["bleak>=0.22.0", "typer>=0.12.0"]
 # ///
+"""Send mock KP2 live-data frames to the KEYPOINT left display over BLE.
+
+This file is also the PRODUCER REFERENCE for the KP2 protocol: a real
+producer only needs to replicate what build_frame() sends here.
+
+Wire protocol (mirrors config/boards/shields/lpm_view/widgets/live_data.{h,c}):
+- Transport: BLE GATT write (with or without response) to CHAR_UUID under
+  SERVICE_UUID on the LEFT (central) keyboard half. The characteristic
+  requires an encrypted link, so the host must be paired with the keyboard.
+- Payload: ASCII "KP2|ICON|L1|L2|L3|L4|L5|L6", max 66 bytes, no newline.
+  * ICON: one of ICON_IDS, selects the 8x8 bitmap in the top status row
+    (NONE shows no icon).
+  * Exactly TEXT_LINE_COUNT (6) line fields; each 0..LINE_MAX (8) chars
+    from 0x20..0x7E, '|' excluded.
+  * The firmware rejects invalid frames with a GATT error and keeps
+    showing the previous content.
+- Freshness: data turns stale KEYPOINT_LIVE_DATA_STALE_MS (6 min) after the
+  last accepted frame -- the health strip under the detail rows changes from
+  a solid bar to dashed segments (text stays readable). Push a frame at
+  least every few minutes to stay "fresh".
+
+Screen layout (72x144 portrait glass; monospace 8x8 font, so each line is
+an 8-char-wide grid row):
+- Top block, under the status row (battery / feed icon / link symbol):
+  lines L1-L3.
+- Bottom block, above the health strip and BLE profile grid: lines L4-L6.
+- Lines render right-aligned; pad to the full 8 chars to control columns:
+  kv("HUM", "40%") -> "HUM  40%" (label left, value right),
+  title("SUNNY") -> "SUNNY   " (left-anchored).
+- Convention used by the demo cards: L1 title, L2 key metric, L3 data
+  timestamp (doubles as a clock), L4-L6 detail rows.
+
+Verify any frame without hardware -- renders a pixel-exact PNG of the glass:
+  uv run scripts/preview_keypoint_status.py --frame 'KP2|SUN|SUNNY   |TMP  24C|12:00|UV     5|HUM  40%|AQI   42'
+"""
 
 from __future__ import annotations
 
