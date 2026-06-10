@@ -20,7 +20,7 @@ def load_module():
 
 preview = load_module()
 
-FRESH_FRAME = "KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
+FRESH_FRAME = "KP2|0|1|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
 STATE = preview.StatusState(
     battery=85,
     charging=False,
@@ -79,25 +79,43 @@ def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
 
 def test_parse_live_frame_accepts_firmware_contract() -> None:
     assert preview.parse_live_frame(FRESH_FRAME) == (
+        0,
+        1,
         "SUN",
         ("SUNNY", "TMP 24C", "12:00", "UV 5", "HUM 40%", "AQI 42"),
     )
-    assert preview.parse_live_frame("KP2|NONE||||||") == ("NONE", ("",) * 6)
-    assert preview.parse_live_frame("KP2|CLAUDE|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
+    assert preview.parse_live_frame("KP2|0|1|NONE||||||") == (0, 1, "NONE", ("",) * 6)
+    assert preview.parse_live_frame("KP2|2|5|CLAUDE|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
+        2,
+        5,
         "CLAUDE",
         ("MAX8CHAR", "ABCDEFGH", "12345678", "IJKLMNOP", "87654321", "QRSTUVWX"),
     )
 
 
+def test_parse_live_frame_returns_idx_and_total() -> None:
+    idx, total, icon, lines = preview.parse_live_frame("KP2|1|3|CLAUDE|CLAUDE  |5H   76%|14:30|||")
+    assert (idx, total, icon) == (1, 3, "CLAUDE")
+    assert lines[0] == "CLAUDE  "
+
+
+def test_live_frame_max_grew_for_page_fields() -> None:
+    assert preview.LIVE_FRAME_MAX == 70
+
+
 @pytest.mark.parametrize(
     "frame",
     [
-        "KP1|SUN|SUNNY|TMP 24C|12:00|||",  # wrong prefix
-        "KP2|SUN|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
-        "KP2|SUN|A|B|C|D|E|F|G",  # too many fields
-        "KP2|SUN|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
-        "KP2|SUN|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
-        "KP2|MOON|A|B|C|D|E|F",  # icon unknown to icon_from_field()
+        "KP1|0|1|SUN|SUNNY|TMP 24C|12:00|||",  # wrong prefix
+        "KP2|0|1|SUN|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
+        "KP2|0|1|SUN|A|B|C|D|E|F|G",  # too many fields
+        "KP2|0|1|SUN|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
+        "KP2|0|1|SUN|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
+        "KP2|0|1|MOON|A|B|C|D|E|",  # icon unknown to icon_from_field()
+        "KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",  # legacy frame: no IDX/TOTAL
+        "KP2|3|3|SUN|A|B|C|D|E|",  # idx must be < total
+        "KP2|0|0|SUN|A|B|C|D|E|",  # total must be >= 1
+        "KP2|x|1|SUN|A|B|C|D|E|",  # non-digit IDX
     ],
 )
 def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
@@ -165,6 +183,15 @@ def test_live_text_is_right_aligned_like_firmware() -> None:
     left_band = (0, line_y, 30, line_y + 9)
     assert min(canvas.crop(band).tobytes()) == preview.BLACK
     assert min(canvas.crop(left_band).tobytes()) == preview.WHITE
+
+
+def test_page_indicator_only_renders_for_multipage_deck() -> None:
+    single = preview.draw_top(STATE, preview.live_data_snapshot("KP2|0|1|CLAUDE|CLAUDE  |5H   76%|14:30|||")).image
+    multi = preview.draw_top(STATE, preview.live_data_snapshot("KP2|1|3|CLAUDE|CLAUDE  |5H   76%|14:30|||")).image
+    # Identical icon + lines: the only rendering difference is the "2/3" indicator.
+    assert single.tobytes() != multi.tobytes()
+    page_y = preview.LAYOUT["KEYPOINT_LIVE_PAGE_Y"]
+    assert min(multi.crop((0, page_y, 70, page_y + 8)).tobytes()) == preview.BLACK
 
 
 def test_text_wider_than_max_width_fails_fast() -> None:

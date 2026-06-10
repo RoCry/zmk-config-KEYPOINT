@@ -140,7 +140,15 @@ def _parse_live_data_contract() -> tuple[str, int, int, int]:
 
 
 LIVE_PREFIX, LIVE_ICON_MAX, LIVE_LINE_COUNT, LIVE_LINE_MAX = _parse_live_data_contract()
-LIVE_FRAME_MAX = len(LIVE_PREFIX) + LIVE_ICON_MAX + (LIVE_LINE_COUNT * LIVE_LINE_MAX) + LIVE_LINE_COUNT
+# Two extra single-digit fields (IDX, TOTAL) with their separators precede ICON.
+LIVE_PAGE_FIELD_MAX = 1  # MAX_PAGES = 8 -> idx 0..7, total 1..8 (one digit)
+LIVE_FRAME_MAX = (
+    len(LIVE_PREFIX)
+    + (LIVE_PAGE_FIELD_MAX + 1) * 2
+    + LIVE_ICON_MAX
+    + (LIVE_LINE_COUNT * LIVE_LINE_MAX)
+    + LIVE_LINE_COUNT
+)
 
 
 def _parse_profile_slot_origins() -> tuple[tuple[int, int], ...]:
@@ -192,11 +200,14 @@ class LiveDataSnapshot:
     lines: tuple[str, ...]
     has_data: bool
     stale: bool
+    view_index: int = 0
+    total_pages: int = 1
 
 
-def parse_live_frame(frame: str | bytes) -> tuple[str, tuple[str, ...]]:
+def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, tuple[str, ...]]:
     """Port of keypoint_live_data_parse(); raises ValueError where the firmware
-    rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED."""
+    rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED. Frame grammar:
+    KP2|IDX|TOTAL|ICON|L1|..|L6."""
     data = frame.encode() if isinstance(frame, str) else frame
     if len(data) > LIVE_FRAME_MAX:
         raise ValueError(f"frame longer than {LIVE_FRAME_MAX} bytes")
@@ -204,32 +215,30 @@ def parse_live_frame(frame: str | bytes) -> tuple[str, tuple[str, ...]]:
     if not data.startswith(prefix):
         raise ValueError(f"frame must start with {LIVE_PREFIX!r}")
 
-    icon_field = ""
-    lines = [""] * LIVE_LINE_COUNT
-    field = 0
-    for byte in data[len(prefix) :]:
-        if byte == ord("|"):
-            if field >= LIVE_LINE_COUNT:
-                raise ValueError("too many fields")
-            field += 1
-            continue
-        field_max = LIVE_ICON_MAX if field == 0 else LIVE_LINE_MAX
-        if not (0x20 <= byte <= 0x7E):
-            raise ValueError(f"non-printable byte 0x{byte:02x}")
-        if field == 0:
-            if len(icon_field) >= field_max:
-                raise ValueError("icon field too long")
-            icon_field += chr(byte)
-        else:
-            if len(lines[field - 1]) >= field_max:
-                raise ValueError(f"line {field} too long")
-            lines[field - 1] += chr(byte)
+    # Fields after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3..(2+LINE_COUNT)=lines.
+    fields = data[len(prefix) :].split(b"|")
+    expected = 3 + LIVE_LINE_COUNT
+    if len(fields) != expected:
+        raise ValueError(f"expected {expected} fields, got {len(fields)}")
 
-    if field != LIVE_LINE_COUNT:
-        raise ValueError(f"expected {LIVE_LINE_COUNT} text fields, got {field}")
-    if icon_field not in ICON_NAMES:
+    if not (fields[0].isdigit() and fields[1].isdigit()):
+        raise ValueError("IDX/TOTAL must be decimal digits")
+    if len(fields[0]) > LIVE_PAGE_FIELD_MAX or len(fields[1]) > LIVE_PAGE_FIELD_MAX:
+        raise ValueError("IDX/TOTAL exceed one digit")
+    idx, total = int(fields[0]), int(fields[1])
+    if total < 1 or not (0 <= idx < total):
+        raise ValueError(f"bad page idx={idx} total={total}")
+
+    icon_field = fields[2].decode("latin-1")
+    if len(icon_field) > LIVE_ICON_MAX or icon_field not in ICON_NAMES:
         raise ValueError(f"unknown icon {icon_field!r}")
-    return icon_field, tuple(lines)
+
+    lines = []
+    for raw in fields[3:]:
+        if len(raw) > LIVE_LINE_MAX or any(not (0x20 <= b <= 0x7E) for b in raw):
+            raise ValueError(f"bad line field {raw!r}")
+        lines.append(raw.decode("ascii"))
+    return idx, total, icon_field, tuple(lines)
 
 
 def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapshot:
@@ -238,8 +247,8 @@ def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapsh
     if frame is None:
         lines = ("NO DATA", "WAITING") + ("",) * (LIVE_LINE_COUNT - 2)
         return LiveDataSnapshot("WARN", lines, has_data=False, stale=False)
-    icon, lines = parse_live_frame(frame)
-    return LiveDataSnapshot(icon, lines, has_data=True, stale=stale)
+    idx, total, icon, lines = parse_live_frame(frame)
+    return LiveDataSnapshot(icon, lines, has_data=True, stale=stale, view_index=idx, total_pages=total)
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +327,16 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
 
     for index, line in enumerate(snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
         _draw_live_line(canvas, line, LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"])
+
+    if snapshot.has_data and snapshot.total_pages > 1:
+        canvas.draw_text(
+            LAYOUT["KEYPOINT_LIVE_TEXT_X"],
+            LAYOUT["KEYPOINT_LIVE_PAGE_Y"],
+            LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
+            FONT_UNSCII_8,
+            f"{snapshot.view_index + 1}/{snapshot.total_pages}",
+            align="right",
+        )
 
 
 def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
@@ -480,12 +499,12 @@ def _kv(label: str, value: str) -> str:
     return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
 
 
-def _card(icon: str, *lines: str) -> str:
+def _card(icon: str, *lines: str, idx: int = 0, total: int = 1) -> str:
     """Build a KP2 frame; missing lines are sent empty."""
     if len(lines) > LIVE_LINE_COUNT:
         raise ValueError(f"at most {LIVE_LINE_COUNT} lines, got {len(lines)}")
     padded = lines + ("",) * (LIVE_LINE_COUNT - len(lines))
-    return f"{LIVE_PREFIX}{icon}|" + "|".join(padded)
+    return f"{LIVE_PREFIX}{idx}|{total}|{icon}|" + "|".join(padded)
 
 
 DEMO_CASES: tuple[PreviewCase, ...] = (
