@@ -12,6 +12,9 @@ from typing import Literal
 from PIL import Image, ImageDraw, ImageFont
 
 CANVAS_SIZE = 72
+SCREEN_WIDTH = 144
+SCREEN_HEIGHT = 72
+RIGHT_CANVAS_X = 68
 BACKGROUND = 255
 FOREGROUND = 0
 STALE_FOREGROUND = 150
@@ -41,6 +44,17 @@ PROFILE_SLOT_Y = (PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y)
 LAYER_TEXT_X = 2
 LAYER_TEXT_Y = 61
 LAYER_TEXT_WIDTH = 68
+
+STALE_COMPONENT_PREVIEW_FILES = (
+    "live_ok.png",
+    "live_stale.png",
+    "live_empty.png",
+    "profile_layer.png",
+    "status_contact_sheet.png",
+    "layer_base.png",
+    "layer_symbol.png",
+    "profile_grid.png",
+)
 
 HealthState = Literal["ok", "stale", "empty"]
 
@@ -159,6 +173,10 @@ def font() -> ImageFont.ImageFont:
 
 def new_canvas() -> Image.Image:
     return Image.new("L", (CANVAS_SIZE, CANVAS_SIZE), BACKGROUND)
+
+
+def new_screen() -> Image.Image:
+    return Image.new("L", (SCREEN_WIDTH, SCREEN_HEIGHT), BACKGROUND)
 
 
 def draw_rect_outline(draw: ImageDraw.ImageDraw, x: int, y: int, width: int, height: int, fill: int) -> None:
@@ -302,28 +320,42 @@ def draw_profile_layer_canvas(profiles: tuple[ProfilePreview, ...], active_index
     return image
 
 
+def draw_full_screen_preview(
+    live: LiveDataPreview,
+    profiles: tuple[ProfilePreview, ...],
+    active_index: int,
+    layer_label: str,
+) -> Image.Image:
+    screen = new_screen()
+    screen.paste(draw_live_data_canvas(live), (0, 0))
+    screen.paste(
+        draw_profile_layer_canvas(profiles=profiles, active_index=active_index, layer_label=layer_label),
+        (RIGHT_CANVAS_X, 0),
+    )
+    return screen
+
+
 def scale_image(image: Image.Image, scale: int) -> Image.Image:
     if scale <= 1:
         return image
     return image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
 
 
-def write_contact_sheet(images: list[tuple[str, Image.Image]], output: Path, scale: int) -> Path:
-    tile = CANVAS_SIZE * scale
+def write_full_screen_page(images: list[tuple[str, Image.Image]], output: Path, scale: int) -> Path:
+    tile_width = SCREEN_WIDTH * scale
+    tile_height = SCREEN_HEIGHT * scale
     label_height = 12 * scale
     padding = 6 * scale
-    width = (tile * 3) + (padding * 4)
-    height = ((tile + label_height) * 3) + (padding * 4)
+    width = tile_width + (padding * 2)
+    height = (len(images) * (tile_height + label_height)) + ((len(images) + 1) * padding)
     sheet = Image.new("L", (width, height), BACKGROUND)
     draw = ImageDraw.Draw(sheet)
 
     for index, (name, image) in enumerate(images):
-        col = index % 3
-        row = index // 3
-        x = padding + col * (tile + padding)
-        y = padding + row * (tile + label_height + padding)
+        x = padding
+        y = padding + index * (tile_height + label_height + padding)
         sheet.paste(scale_image(image, scale), (x, y))
-        draw.text((x, y + tile + 1), name, fill=FOREGROUND, font=font())
+        draw.text((x, y + tile_height + 1), name, fill=FOREGROUND, font=font())
 
     sheet.save(output)
     return output
@@ -331,46 +363,50 @@ def write_contact_sheet(images: list[tuple[str, Image.Image]], output: Path, sca
 
 def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    for stale_name in STALE_COMPONENT_PREVIEW_FILES:
+        (output_dir / stale_name).unlink(missing_ok=True)
+
+    profiles = (
+        ProfilePreview(connected=True, bonded=True),
+        ProfilePreview(connected=False, bonded=True),
+        ProfilePreview(connected=False, bonded=False),
+        ProfilePreview(connected=False, bonded=False),
+    )
     samples = [
         (
-            "live_ok",
-            draw_live_data_canvas(LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok")),
-        ),
-        (
-            "live_stale",
-            draw_live_data_canvas(LiveDataPreview(icon="CODEX", lines=("CODEX", "7D 45%", "12:00"), health="stale")),
-        ),
-        (
-            "live_empty",
-            draw_live_data_canvas(LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty")),
-        ),
-        (
-            "profile_layer",
-            draw_profile_layer_canvas(
-                (
-                    ProfilePreview(connected=True, bonded=True),
-                    ProfilePreview(connected=False, bonded=True),
-                    ProfilePreview(connected=False, bonded=False),
-                    ProfilePreview(connected=False, bonded=False),
-                ),
+            "ok / base",
+            draw_full_screen_preview(
+                live=LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok"),
+                profiles=profiles,
                 active_index=0,
                 layer_label="BASE",
             ),
         ),
+        (
+            "stale / lower",
+            draw_full_screen_preview(
+                live=LiveDataPreview(icon="CODEX", lines=("CODEX", "7D 45%", "12:00"), health="stale"),
+                profiles=profiles,
+                active_index=1,
+                layer_label="LOWER",
+            ),
+        ),
+        (
+            "empty / symbol",
+            draw_full_screen_preview(
+                live=LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty"),
+                profiles=profiles,
+                active_index=0,
+                layer_label="SYMBOL",
+            ),
+        ),
     ]
 
-    written: list[Path] = []
-    for name, image in samples:
-        output = output_dir / f"{name}.png"
-        scale_image(image, scale).save(output)
-        written.append(output)
-
-    written.append(write_contact_sheet(samples, output_dir / "status_contact_sheet.png", scale=scale))
-    return written
+    return [write_full_screen_page(samples, output_dir / "status_full_screen.png", scale=scale)]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render KEYPOINT 72x72 status UI preview PNGs.")
+    parser = argparse.ArgumentParser(description="Render the KEYPOINT 144x72 status UI preview page.")
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
     parser.add_argument("--scale", type=int, default=4)
     args = parser.parse_args()

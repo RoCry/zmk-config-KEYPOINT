@@ -17,27 +17,34 @@ def load_module():
     return module
 
 
-def test_status_preview_writes_representative_canvases() -> None:
+def test_status_preview_writes_one_full_screen_page() -> None:
     preview = load_module()
 
     with tempfile.TemporaryDirectory() as tmp:
         output_dir = Path(tmp)
-        written = preview.write_preview_set(output_dir, scale=2)
-
-        names = {path.name for path in written}
-        assert {
+        stale_names = (
             "live_ok.png",
             "live_stale.png",
             "live_empty.png",
             "profile_layer.png",
             "status_contact_sheet.png",
-        } <= names
+            "layer_base.png",
+            "layer_symbol.png",
+            "profile_grid.png",
+        )
+        for stale_name in stale_names:
+            (output_dir / stale_name).write_bytes(b"stale")
 
-        for name in names:
-            with Image.open(output_dir / name) as image:
-                assert image.mode == "L"
-                assert image.size[0] >= preview.CANVAS_SIZE
-                assert image.size[1] >= preview.CANVAS_SIZE
+        written = preview.write_preview_set(output_dir, scale=2)
+
+        names = {path.name for path in written}
+        assert names == {"status_full_screen.png"}
+        assert {path.name for path in output_dir.iterdir()} == {"status_full_screen.png"}
+
+        with Image.open(output_dir / "status_full_screen.png") as image:
+            assert image.mode == "L"
+            assert image.size[0] >= preview.SCREEN_WIDTH * 2
+            assert image.size[1] > preview.SCREEN_HEIGHT * 3
 
 
 def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
@@ -63,6 +70,28 @@ def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
 
     assert empty.getpixel((2, preview.LIVE_HEALTH_Y)) == preview.BACKGROUND
     assert empty.getpixel((35, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
+
+
+def test_full_screen_preview_combines_live_data_and_info_panel() -> None:
+    preview = load_module()
+
+    image = preview.draw_full_screen_preview(
+        live=preview.LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok"),
+        profiles=(
+            preview.ProfilePreview(connected=True, bonded=True),
+            preview.ProfilePreview(connected=False, bonded=True),
+            preview.ProfilePreview(connected=False, bonded=False),
+            preview.ProfilePreview(connected=False, bonded=False),
+        ),
+        active_index=0,
+        layer_label="BASE",
+    )
+
+    assert image.size == (preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT)
+    left_half = image.crop((0, 0, preview.CANVAS_SIZE, preview.SCREEN_HEIGHT))
+    right_half = image.crop((preview.RIGHT_CANVAS_X, 0, preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT))
+    assert min(left_half.tobytes()) < preview.BACKGROUND
+    assert min(right_half.tobytes()) < preview.BACKGROUND
 
 
 def test_live_data_preview_uses_expanded_vertical_area() -> None:
