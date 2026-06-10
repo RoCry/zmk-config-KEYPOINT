@@ -117,8 +117,20 @@ def test_status_uses_compact_profile_grid_and_layer_chip() -> None:
     assert "draw_profile_grid(" in middle
     assert "draw_profile_slot(" in text
     assert "lv_canvas_draw_arc(" not in middle
+    assert "draw_layer_chip(" in middle
     assert "draw_layer_chip(" in bottom
     assert 'return "BASE";' in text
+
+
+def test_layer_status_refreshes_visible_profile_layer_canvas() -> None:
+    text = STATUS_C.read_text()
+
+    setter_start = text.index("static void set_layer_status(")
+    setter_end = text.index("static void layer_status_update_cb(", setter_start)
+    setter = text[setter_start:setter_end]
+
+    assert "draw_middle(widget->obj, widget->cbuf2, &widget->state);" in setter
+    assert "draw_bottom(widget->obj, widget->cbuf3, &widget->state);" in setter
 
 
 def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
@@ -151,6 +163,15 @@ def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> 
 
     assert "lv_canvas_draw_text(canvas, 3, 23 + (i * 11), 67" not in text
     assert "draw_bitmap_icon(canvas, 2, 55, icon_dsc, rows);" not in text
+
+
+def test_profile_layout_leaves_room_for_layer_chip() -> None:
+    layout = STATUS_LAYOUT_H.read_text()
+
+    assert "#define KEYPOINT_PROFILE_SLOT_WIDTH 15" in layout
+    assert "#define KEYPOINT_PROFILE_SLOT_HEIGHT 16" in layout
+    assert "#define KEYPOINT_PROFILE_MARK_SIZE 3" in layout
+    assert "#define KEYPOINT_LAYER_CHIP_Y 28" in layout
 
 
 def test_live_data_panel_draws_health_strip() -> None:

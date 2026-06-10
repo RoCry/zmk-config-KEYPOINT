@@ -29,9 +29,7 @@ def test_status_preview_writes_representative_canvases() -> None:
             "live_ok.png",
             "live_stale.png",
             "live_empty.png",
-            "profile_grid.png",
-            "layer_base.png",
-            "layer_symbol.png",
+            "profile_layer.png",
             "status_contact_sheet.png",
         } <= names
 
@@ -67,10 +65,15 @@ def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
     assert empty.getpixel((35, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
 
 
-def test_profile_grid_preview_encodes_active_connected_bonded_and_open_states() -> None:
+def test_profile_layer_preview_keeps_profiles_small_and_layer_visible() -> None:
     preview = load_module()
 
-    image = preview.draw_profile_grid_canvas(
+    assert preview.PROFILE_SLOT_WIDTH <= 18
+    assert preview.PROFILE_SLOT_HEIGHT <= 18
+    assert preview.PROFILE_MARK_SIZE <= 4
+    assert preview.PROFILE_SLOT_Y[0] + preview.PROFILE_SLOT_HEIGHT < preview.LAYER_CHIP_Y
+
+    image = preview.draw_profile_layer_canvas(
         (
             preview.ProfilePreview(connected=True, bonded=True),
             preview.ProfilePreview(connected=False, bonded=True),
@@ -78,10 +81,12 @@ def test_profile_grid_preview_encodes_active_connected_bonded_and_open_states() 
             preview.ProfilePreview(connected=False, bonded=False),
         ),
         active_index=0,
+        layer_label="LOWER",
     )
 
     assert image.getpixel((preview.PROFILE_SLOT_X[0] + 1, preview.PROFILE_SLOT_Y[0] + 1)) == preview.FOREGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[0] + 23, preview.PROFILE_SLOT_Y[0] + 9)) == preview.BACKGROUND
+    assert image.getpixel((preview.PROFILE_SLOT_X[0] + 11, preview.PROFILE_SLOT_Y[0] + 11)) == preview.BACKGROUND
     assert image.getpixel((preview.PROFILE_SLOT_X[1] + 1, preview.PROFILE_SLOT_Y[1] + 1)) == preview.BACKGROUND
     assert image.getpixel((preview.PROFILE_SLOT_X[1], preview.PROFILE_SLOT_Y[1])) == preview.FOREGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[2] + 23, preview.PROFILE_SLOT_Y[2] + 9)) == preview.FOREGROUND
+    assert image.getpixel((preview.PROFILE_SLOT_X[2] + 11, preview.PROFILE_SLOT_Y[2] + 11)) == preview.FOREGROUND
+    assert image.getpixel((preview.LAYER_CHIP_X, preview.LAYER_CHIP_Y)) == preview.FOREGROUND

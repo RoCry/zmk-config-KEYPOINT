@@ -258,7 +258,7 @@ static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state
     }
 
     snprintk(label, sizeof(label), "%u", index + 1);
-    lv_canvas_draw_text(canvas, x + 2, y + 2, 16, active ? background_label_dsc : foreground_label_dsc,
+    lv_canvas_draw_text(canvas, x + 1, y + 1, 9, active ? background_label_dsc : foreground_label_dsc,
                         label);
 
     const lv_coord_t mark_x = x + KEYPOINT_PROFILE_MARK_X_OFFSET;
@@ -280,10 +280,10 @@ static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state
                               const lv_draw_label_dsc_t *foreground_label_dsc,
                               const lv_draw_label_dsc_t *background_label_dsc) {
     static const lv_coord_t slot_offsets[KEYPOINT_STATUS_PROFILE_COUNT][2] = {
-        {3, 6},
-        {39, 6},
-        {3, 40},
-        {39, 40},
+        {2, 3},
+        {20, 3},
+        {38, 3},
+        {56, 3},
     };
 
     for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
@@ -293,6 +293,10 @@ static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state
     }
 }
 
+static void draw_layer_chip(lv_obj_t *canvas, const struct status_state *state,
+                            const lv_draw_rect_dsc_t *rect_dsc,
+                            const lv_draw_label_dsc_t *label_dsc);
+
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
     lv_obj_t *canvas = lv_obj_get_child(widget, 1);
 
@@ -300,15 +304,20 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     lv_draw_rect_dsc_t rect_white_dsc;
     init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
-    lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
-    lv_draw_label_dsc_t label_dsc_black;
-    init_label_dsc(&label_dsc_black, LVGL_BACKGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
+    lv_draw_label_dsc_t profile_label_dsc;
+    init_label_dsc(&profile_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_LEFT);
+    lv_draw_label_dsc_t profile_label_dsc_black;
+    init_label_dsc(&profile_label_dsc_black, LVGL_BACKGROUND, &lv_font_unscii_8,
+                   LV_TEXT_ALIGN_LEFT);
+    lv_draw_label_dsc_t layer_label_dsc;
+    init_label_dsc(&layer_label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14,
+                   LV_TEXT_ALIGN_CENTER);
 
     // Fill background.
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
-    draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &label_dsc,
-                      &label_dsc_black);
+    draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &profile_label_dsc,
+                      &profile_label_dsc_black);
+    draw_layer_chip(canvas, state, &rect_white_dsc, &layer_label_dsc);
 
     rotate_canvas(canvas, cbuf);
 }
@@ -444,6 +453,7 @@ static void set_layer_status(struct zmk_widget_status *widget, struct layer_stat
     widget->state.layer_index = state.index;
     widget->state.layer_label = state.label;
 
+    draw_middle(widget->obj, widget->cbuf2, &widget->state);
     draw_bottom(widget->obj, widget->cbuf3, &widget->state);
 }
 

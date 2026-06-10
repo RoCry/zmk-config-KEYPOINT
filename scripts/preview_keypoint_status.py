@@ -28,16 +28,17 @@ LIVE_HEALTH_Y = 68
 LIVE_HEALTH_X = 2
 LIVE_HEALTH_WIDTH = 68
 
-PROFILE_SLOT_WIDTH = 30
-PROFILE_SLOT_HEIGHT = 24
-PROFILE_MARK_SIZE = 7
-PROFILE_MARK_X_OFFSET = 20
-PROFILE_MARK_Y_OFFSET = 6
-PROFILE_SLOT_X = (3, 39, 3, 39)
-PROFILE_SLOT_Y = (6, 6, 40, 40)
+PROFILE_SLOT_WIDTH = 15
+PROFILE_SLOT_HEIGHT = 16
+PROFILE_CORNER_SIZE = 4
+PROFILE_MARK_SIZE = 3
+PROFILE_MARK_X_OFFSET = 10
+PROFILE_MARK_Y_OFFSET = 10
+PROFILE_SLOT_X = (2, 20, 38, 56)
+PROFILE_SLOT_Y = (3, 3, 3, 3)
 
 LAYER_CHIP_X = 2
-LAYER_CHIP_Y = 20
+LAYER_CHIP_Y = 28
 LAYER_CHIP_WIDTH = 68
 LAYER_CHIP_HEIGHT = 28
 
@@ -171,7 +172,7 @@ def draw_plus_marker(draw: ImageDraw.ImageDraw, x: int, y: int, fill: int) -> No
 
 
 def draw_corner_slot(draw: ImageDraw.ImageDraw, x: int, y: int, fill: int) -> None:
-    corner = 7
+    corner = PROFILE_CORNER_SIZE
     right = x + PROFILE_SLOT_WIDTH - 1
     bottom = y + PROFILE_SLOT_HEIGHT - 1
     draw.rectangle((x, y, x + corner - 1, y), fill=fill)
@@ -243,7 +244,7 @@ def draw_profile_slot(
         else:
             draw_corner_slot(draw, x, y, fill=FOREGROUND)
 
-    draw.text((x + 4, y + 4), label, fill=text_fill, font=font())
+    draw.text((x + 1, y + 1), label, fill=text_fill, font=font())
 
     mark_x = x + PROFILE_MARK_X_OFFSET
     mark_y = y + PROFILE_MARK_Y_OFFSET
@@ -276,6 +277,11 @@ def draw_profile_grid_canvas(profiles: tuple[ProfilePreview, ...], active_index:
 def draw_layer_chip_canvas(label: str) -> Image.Image:
     image = new_canvas()
     draw = ImageDraw.Draw(image)
+    draw_layer_chip(draw, label=label)
+    return image
+
+
+def draw_layer_chip(draw: ImageDraw.ImageDraw, label: str) -> None:
     draw_rect_outline(draw, LAYER_CHIP_X, LAYER_CHIP_Y, LAYER_CHIP_WIDTH, LAYER_CHIP_HEIGHT, fill=FOREGROUND)
     text = label[:8]
     bbox = draw.textbbox((0, 0), text, font=font())
@@ -290,6 +296,11 @@ def draw_layer_chip_canvas(label: str) -> Image.Image:
         fill=FOREGROUND,
         font=font(),
     )
+
+
+def draw_profile_layer_canvas(profiles: tuple[ProfilePreview, ...], active_index: int, layer_label: str) -> Image.Image:
+    image = draw_profile_grid_canvas(profiles=profiles, active_index=active_index)
+    draw_layer_chip(ImageDraw.Draw(image), label=layer_label)
     return image
 
 
@@ -336,8 +347,8 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
             draw_live_data_canvas(LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty")),
         ),
         (
-            "profile_grid",
-            draw_profile_grid_canvas(
+            "profile_layer",
+            draw_profile_layer_canvas(
                 (
                     ProfilePreview(connected=True, bonded=True),
                     ProfilePreview(connected=False, bonded=True),
@@ -345,10 +356,9 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
                     ProfilePreview(connected=False, bonded=False),
                 ),
                 active_index=0,
+                layer_label="BASE",
             ),
         ),
-        ("layer_base", draw_layer_chip_canvas("BASE")),
-        ("layer_symbol", draw_layer_chip_canvas("SYMBOL")),
     ]
 
     written: list[Path] = []
