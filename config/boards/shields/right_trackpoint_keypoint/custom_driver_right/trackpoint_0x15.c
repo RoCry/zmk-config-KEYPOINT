@@ -19,9 +19,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
-#include <zmk/events/hid_indicators_changed.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <zmk/hid.h>
 
 #include "custom_led.h"
 
@@ -91,23 +89,6 @@ static bool last_scroll_key_pressed = false; // ★ NEW
 static bool last_arrow_key_pressed = false;
 uint32_t last_packet_time = 0;
 
-/* ==== HID indicators ==== */
-static zmk_hid_indicators_t current_indicators;
-#define HID_INDICATORS_CAPS_LOCK (1 << 1)
-/* =========================
- *   HID indicator listener
- * ========================= */
-static int hid_indicators_listener(const zmk_event_t *eh) {
-    const struct zmk_hid_indicators_changed *ev = as_zmk_hid_indicators_changed(eh);
-    if (ev) {
-        current_indicators = ev->indicators;
-    }
-    return ZMK_EV_EVENT_BUBBLE;
-}
-
-ZMK_LISTENER(a320_hid_listener, hid_indicators_listener);
-ZMK_SUBSCRIPTION(a320_hid_listener, zmk_hid_indicators_changed);
-
 /* ========= Space + Slow key listener ========= */
 static int special_key_listener_cb(const zmk_event_t *eh) {
     const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
@@ -129,7 +110,7 @@ static int special_key_listener_cb(const zmk_event_t *eh) {
     // ★ NEW: Slow key
     if (ev->position == 22) {
         slow_key_pressed = ev->state;
-        LOG_INF("slow_key position=37 %s", slow_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("slow key position=22 %s", slow_key_pressed ? "PRESSED" : "RELEASED");
     }
 
     return 0;

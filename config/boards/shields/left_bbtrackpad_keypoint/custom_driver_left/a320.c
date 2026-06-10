@@ -7,6 +7,7 @@
 
 #define DT_DRV_COMPAT avago_a320
 
+#include <stdint.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <stdlib.h>
@@ -20,9 +21,7 @@
 #include <zephyr/input/input.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
-#include <zmk/events/hid_indicators_changed.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
-#include <zmk/hid.h>
 
 #include "trackpad_led.h"
 #include "a320.h"
@@ -88,24 +87,7 @@ static bool slow_key_pressed = false;
 static bool last_scroll_mode_active = false;
 static bool last_arrow_key_pressed = false;
 uint32_t last_packet_time = 0;
-static bool touched = false;
-
-/* ==== HID indicators ==== */
-static zmk_hid_indicators_t current_indicators;
-#define HID_INDICATORS_CAPS_LOCK (1 << 1)
-/* =========================
- *   HID indicator listener
- * ========================= */
-static int hid_indicators_listener(const zmk_event_t *eh) {
-    const struct zmk_hid_indicators_changed *ev = as_zmk_hid_indicators_changed(eh);
-    if (ev) {
-        current_indicators = ev->indicators;
-    }
-    return ZMK_EV_EVENT_BUBBLE;
-}
-
-ZMK_LISTENER(a320_hid_listener, hid_indicators_listener);
-ZMK_SUBSCRIPTION(a320_hid_listener, zmk_hid_indicators_changed);
+static uint32_t last_touch_time = 0;
 
 /* ========= Space + Slow Key listener ========= */
 static int special_key_listener_cb(const zmk_event_t *eh) {
@@ -114,18 +96,18 @@ static int special_key_listener_cb(const zmk_event_t *eh) {
         return 0;
     if (ev->position == 20) {
         arrow_key_pressed = ev->state;
-        LOG_INF("space position=49 %s", arrow_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("arrow key position=20 %s", arrow_key_pressed ? "PRESSED" : "RELEASED");
     }
 
-    // Scroll key (Space)
     if (ev->position == 48 || ev->position == 49) {
         scroll_key_pressed = ev->state;
-        LOG_INF("space position=49 %s", scroll_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("scroll key position=%d %s", ev->position,
+                scroll_key_pressed ? "PRESSED" : "RELEASED");
     }
 
     if (ev->position == 22) {
         slow_key_pressed = ev->state;
-        LOG_INF("slow_key position=37 %s", slow_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("slow key position=22 %s", slow_key_pressed ? "PRESSED" : "RELEASED");
     }
 
     return 0;
@@ -159,16 +141,19 @@ static int a320_read_packet(const struct device *dev, int8_t *dx, int8_t *dy) {
 
     k_mutex_lock(&a320_i2c_mutex, K_FOREVER);
 
-    if (i2c_write_dt(&cfg->i2c, &reg, 1) < 0)
+    ret = i2c_write_dt(&cfg->i2c, &reg, 1);
+    if (ret < 0) {
         goto out;
+    }
 
-    if (i2c_burst_read_dt(&cfg->i2c, 0x82, buf, sizeof(buf)) < 0)
+    ret = i2c_burst_read_dt(&cfg->i2c, 0x82, buf, sizeof(buf));
+    if (ret < 0) {
         goto out;
+    }
 
     *dx = (int8_t)buf[1];
     *dy = -(int8_t)buf[2];
-
-    return 0;
+    ret = 0;
 
 out:
     k_mutex_unlock(&a320_i2c_mutex);
@@ -264,15 +249,14 @@ static void a320_work_cb(struct k_work *work) {
             IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
         last_arrow_key_pressed = arrow_key_pressed;
 
-        touched = false;
         return;
     }
 
     int8_t dx = 0, dy = 0;
 
     /* ========= ⭐ NEW: DRAIN MODE ========= */
-    int8_t total_dx = 0;
-    int8_t total_dy = 0;
+    int16_t total_dx = 0;
+    int16_t total_dy = 0;
     bool got_data = false;
 
     while (1) {
@@ -292,31 +276,23 @@ static void a320_work_cb(struct k_work *work) {
         got_data = true;
     }
 
-    /* ========= ⭐ TOUCH TIME TRACK ========= */
-    static uint32_t last_touch_time = 0;
-
     if (got_data) {
         last_touch_time = now;
-        touched = true;
     }
 
     /* ========= ⭐ TOUCH RELEASE  ========= */
     if (!got_data) {
-        if (now - last_touch_time > TOUCH_IDLE_TIMEOUT) { // 30~80ms 可调
-            touched = false;
-        }
         return;
     }
 
-    dx = total_dx;
-    dy = total_dy;
+    dx = CLAMP(total_dx, INT8_MIN, INT8_MAX);
+    dy = CLAMP(total_dy, INT8_MIN, INT8_MAX);
 
     /* ========= scroll / arrow mode 切换检测 ========= */
     bool scroll_mode_active =
         IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
     bool just_enter_scroll = scroll_mode_active && !last_scroll_mode_active;
     bool just_enter_arrow = arrow_key_pressed && !last_arrow_key_pressed;
-    bool capslock = current_indicators & HID_INDICATORS_CAPS_LOCK;
 
     if (arrow_key_pressed) {
 
@@ -340,7 +316,7 @@ static void a320_work_cb(struct k_work *work) {
         process_arrow_axis(dev, dx, &data->arrow_residue_x, INPUT_BTN_1, INPUT_BTN_0);
 
         process_arrow_axis(dev, dy, &data->arrow_residue_y, INPUT_BTN_3, INPUT_BTN_2);
-    } else if (scroll_mode_active || capslock) {
+    } else if (scroll_mode_active) {
 
         if (just_enter_scroll) {
             data->scroll_residue_x = dx * SCROLL_X_DIR;
@@ -363,7 +339,7 @@ static void a320_work_cb(struct k_work *work) {
         input_report_rel(dev, INPUT_REL_HWHEEL, out_x, false, K_FOREVER);
         input_report_rel(dev, INPUT_REL_WHEEL, -out_y, true, K_FOREVER);
         k_msleep(25);
-    } else if (!capslock) {
+    } else {
 
         uint8_t a320_led_brt = indicator_tp_get_last_valid_brightness();
         float a320_factor = 0.4f + 0.01f * a320_led_brt;
@@ -375,13 +351,10 @@ static void a320_work_cb(struct k_work *work) {
 
         input_report_rel(dev, INPUT_REL_X, (int)fx, false, K_NO_WAIT);
         input_report_rel(dev, INPUT_REL_Y, (int)fy, true, K_NO_WAIT);
-    } else {
-        touched = false;
     }
 
     last_scroll_mode_active = scroll_mode_active;
     last_arrow_key_pressed = arrow_key_pressed;
-    touched = false;
     data->last_packet_time = now;
     k_msleep(4);
 }
@@ -395,7 +368,13 @@ static void motion_isr(const struct device *port, struct gpio_callback *cb, uint
     k_work_submit_to_queue(&a320_workq, &data->work);
 }
 
-bool tp_is_touched(void) { return touched; }
+bool tp_is_touched(void) {
+    if (last_touch_time == 0) {
+        return false;
+    }
+
+    return (k_uptime_get_32() - last_touch_time) <= TOUCH_IDLE_TIMEOUT;
+}
 
 static void a320_enable_irq_work_cb(struct k_work *work) {
     struct k_work_delayable *dwork = CONTAINER_OF(work, struct k_work_delayable, work);

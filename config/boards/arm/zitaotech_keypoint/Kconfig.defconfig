@@ -32,9 +32,6 @@ config BOARD
 config ZMK_SPLIT
     default y
 
-config ZMK_SPLIT_PERIPHERAL_HID_INDICATORS
-    default y
-
 config BT_CTLR
     default BT
 

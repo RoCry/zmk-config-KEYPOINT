@@ -2,6 +2,10 @@
 
 Date: 2026-06-10
 
+> Historical design note. Current firmware uses the KP3 deck protocol
+> (`KP3|GEN|IDX|TOTAL|ICON|LED|L1|..|L6`, 75 bytes max); see `README.md`.
+> KP2 paging details below are retained only as implementation history.
+
 Two independent keymap-ergonomics changes requested together.
 
 1. **Right hand** — the trackpoint "hold-to-scroll" modifier moves from the

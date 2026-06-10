@@ -1,5 +1,9 @@
 # KEYPOINT TAB Scroll + Live-Data Page Navigation Implementation Plan
 
+> Historical implementation plan. Current firmware uses the KP3 deck protocol
+> (`KP3|GEN|IDX|TOTAL|ICON|LED|L1|..|L6`, 75 bytes max); see `README.md`.
+> KP2 details below are retained only as execution history.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Move the trackpoint hold-to-scroll modifier from the right-thumb BSPC key to the right-thumb TAB key, and turn the two left center-cluster keys into next/previous page controls for a new firmware-side multi-card live-data deck.

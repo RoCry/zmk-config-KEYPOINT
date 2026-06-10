@@ -3,16 +3,18 @@
 # requires-python = ">=3.13"
 # dependencies = ["bleak>=0.22.0", "typer>=0.12.0"]
 # ///
-"""Send mock KP2 live-data frames to the KEYPOINT left display over BLE.
+"""Send mock KP3 live-data frames to the KEYPOINT left display over BLE.
 
-This file is also the PRODUCER REFERENCE for the KP2 protocol: a real
+This file is also the PRODUCER REFERENCE for the KP3 protocol: a real
 producer only needs to replicate what build_frame() sends here.
 
 Wire protocol (mirrors config/boards/shields/lpm_view/widgets/live_data.{h,c}):
 - Transport: BLE GATT write (with or without response) to CHAR_UUID under
   SERVICE_UUID on the LEFT (central) keyboard half. The characteristic
   requires an encrypted link, so the host must be paired with the keyboard.
-- Payload: ASCII "KP2|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6", max 72 bytes, no newline.
+- Payload: ASCII "KP3|GEN|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6", max 75 bytes, no newline.
+  * GEN: two uppercase hex digits. The firmware stages pages by GEN and only
+    commits a deck after every page for that GEN has arrived.
   * IDX/TOTAL: this card's 0-based page index and the deck size (each a single
     decimal digit, TOTAL in 1..PAGE_MAX). The firmware stores the whole deck;
     the keyboard's left keys page through it locally.
@@ -41,7 +43,8 @@ an 8-char-wide grid row):
   timestamp (doubles as a clock), L4-L6 detail rows.
 
 Verify any frame without hardware -- renders a pixel-exact PNG of the glass:
-  uv run scripts/preview_keypoint_status.py --frame 'KP2|0|1|SUN|0|SUNNY   |TMP  24C|12:00|UV     5|HUM  40%|AQI   42'
+  uv run scripts/preview_keypoint_status.py --frame \
+    'KP3|A0|0|1|SUN|0|SUNNY   |TMP  24C|12:00|UV     5|HUM  40%|AQI   42'
 """
 
 from __future__ import annotations
@@ -63,7 +66,8 @@ from bleak.exc import BleakError
 
 SERVICE_UUID = "f5d40000-6d2f-4f4b-9b2a-2f4a8e8c0001"
 CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"
-PREFIX = "KP2|"
+PREFIX = "KP3|"
+GENERATION_FIELD_MAX = 2
 ICON_MAX = 8
 TEXT_LINE_COUNT = 6
 LINE_MAX = 8
@@ -503,13 +507,23 @@ def validate_lines(lines: Sequence[str]) -> None:
                 raise ValueError(f"line {index} contains unsupported character {ch!r}")
 
 
-def build_frame(icon: str, led_hint: str, lines: Sequence[str], *, idx: int = 0, total: int = 1) -> bytes:
+def build_frame(
+    icon: str,
+    led_hint: str,
+    lines: Sequence[str],
+    *,
+    generation: int = 0,
+    idx: int = 0,
+    total: int = 1,
+) -> bytes:
     validate_icon(icon=icon)
     validate_led_hint(led_hint=led_hint)
     validate_lines(lines=lines)
+    if not (0 <= generation <= 0xFF):
+        raise ValueError(f"bad generation={generation}; expected 0..255")
     if not (1 <= total <= PAGE_MAX) or not (0 <= idx < total):
         raise ValueError(f"bad page idx={idx} total={total} (PAGE_MAX={PAGE_MAX})")
-    return f"{PREFIX}{idx}|{total}|{icon}|{led_hint}|{'|'.join(lines)}".encode("ascii")
+    return f"{PREFIX}{generation:02X}|{idx}|{total}|{icon}|{led_hint}|{'|'.join(lines)}".encode("ascii")
 
 
 def lines_for_source(source: DemoSource, data_time: str) -> tuple[str, str, str, str, str, str]:
@@ -585,6 +599,7 @@ async def send_loop(
     data_time = datetime.now().strftime("%H:%M")
     next_source_update = monotonic() + source_interval
     sent_count = 0
+    generation = 0
 
     async with BleakClient(target, services=[SERVICE_UUID]) as client:
         while True:
@@ -596,11 +611,13 @@ async def send_loop(
 
             # Push the whole deck each cycle; the firmware owns page navigation.
             total = len(deck)
+            generation = (generation + 1) & 0xFF
             for idx, source in enumerate(deck):
                 frame = build_frame(
                     icon=source.icon,
                     led_hint=source.led_hint,
                     lines=lines_for_source(source=source, data_time=data_time),
+                    generation=generation,
                     idx=idx,
                     total=total,
                 )

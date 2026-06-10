@@ -51,6 +51,7 @@ static const struct device *const led_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_trackpad
 #define AUTO_OFF_DELAY_MS 5000
 
 #define USB_CONFIRM_MS 650
+#define LIVE_CONFIRM_MS 500
 #define PULSE_GAP_MS 140
 
 static struct k_work_delayable polling_work;
@@ -70,7 +71,10 @@ static int64_t usb_confirm_start_ms = -USB_CONFIRM_MS;
 
 #if TRACKPAD_LED_HAS_LIVE_DATA
 static int64_t next_live_refresh_ms;
+static int64_t live_confirm_start_ms = -LIVE_CONFIRM_MS;
 static struct keypoint_live_data_snapshot live_snapshot;
+static uint8_t live_generation;
+static bool live_generation_seen;
 #endif
 
 static void set_led_brightness(uint8_t level) {
@@ -157,6 +161,13 @@ static uint8_t led_level_at(int64_t now_ms) {
         return burst_active(usb_elapsed_ms, USB_CONFIRM_MS, 90, 2) ? BRT_MAX : 0;
     }
 
+#if TRACKPAD_LED_HAS_LIVE_DATA
+    int64_t live_confirm_elapsed_ms = now_ms - live_confirm_start_ms;
+    if (live_confirm_elapsed_ms >= 0 && live_confirm_elapsed_ms < LIVE_CONFIRM_MS) {
+        return burst_active(live_confirm_elapsed_ms, LIVE_CONFIRM_MS, 70, 1) ? BRT_ATTENTION : 0;
+    }
+#endif
+
     return live_data_level_at(now_ms);
 }
 
@@ -166,7 +177,15 @@ static void refresh_live_snapshot_if_due(int64_t now_ms) {
         return;
     }
 
-    live_snapshot = keypoint_live_data_snapshot_get();
+    struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
+    if (snapshot.has_data &&
+        (!live_generation_seen || snapshot.generation != live_generation)) {
+        live_generation_seen = true;
+        live_generation = snapshot.generation;
+        live_confirm_start_ms = now_ms;
+    }
+
+    live_snapshot = snapshot;
     next_live_refresh_ms = now_ms + LIVE_REFRESH_MS;
 #else
     ARG_UNUSED(now_ms);
@@ -267,6 +286,9 @@ static int indicator_tp_init(void) {
 
 #if TRACKPAD_LED_HAS_LIVE_DATA
     next_live_refresh_ms = 0;
+    live_generation_seen = false;
+    live_generation = 0;
+    live_confirm_start_ms = -LIVE_CONFIRM_MS;
     live_snapshot = keypoint_live_data_snapshot_get();
 #endif
 

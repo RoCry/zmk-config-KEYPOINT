@@ -1,5 +1,9 @@
 # KEYPOINT Live Data Display Design
 
+> Historical design note. Current firmware uses the KP3 deck protocol
+> (`KP3|GEN|IDX|TOTAL|ICON|LED|L1|..|L6`, 75 bytes max); see `README.md`.
+> KP2 details below are retained only as implementation history.
+
 ## Goal
 
 Show small host-provided live data on the left KEYPOINT display by replacing the

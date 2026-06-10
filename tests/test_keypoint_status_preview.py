@@ -20,7 +20,7 @@ def load_module():
 
 preview = load_module()
 
-FRESH_FRAME = "KP2|0|1|SUN|0|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
+FRESH_FRAME = "KP3|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
 STATE = preview.StatusState(
     battery=85,
     charging=False,
@@ -79,14 +79,16 @@ def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
 
 def test_parse_live_frame_accepts_firmware_contract() -> None:
     assert preview.parse_live_frame(FRESH_FRAME) == (
+        0xA0,
         0,
         1,
         "SUN",
         0,
         ("SUNNY", "TMP 24C", "12:00", "UV 5", "HUM 40%", "AQI 42"),
     )
-    assert preview.parse_live_frame("KP2|0|1|NONE|0||||||") == (0, 1, "NONE", 0, ("",) * 6)
-    assert preview.parse_live_frame("KP2|2|5|CLAUDE|2|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
+    assert preview.parse_live_frame("KP3|0F|0|1|NONE|0||||||") == (0x0F, 0, 1, "NONE", 0, ("",) * 6)
+    assert preview.parse_live_frame("KP3|FF|2|5|CLAUDE|2|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
+        0xFF,
         2,
         5,
         "CLAUDE",
@@ -96,33 +98,38 @@ def test_parse_live_frame_accepts_firmware_contract() -> None:
 
 
 def test_parse_live_frame_returns_idx_and_total() -> None:
-    idx, total, icon, led_hint, lines = preview.parse_live_frame("KP2|1|3|CLAUDE|2|CLAUDE  |5H   76%|14:30|||")
-    assert (idx, total, icon, led_hint) == (1, 3, "CLAUDE", 2)
+    generation, idx, total, icon, led_hint, lines = preview.parse_live_frame(
+        "KP3|A1|1|3|CLAUDE|2|CLAUDE  |5H   76%|14:30|||"
+    )
+    assert (generation, idx, total, icon, led_hint) == (0xA1, 1, 3, "CLAUDE", 2)
     assert lines[0] == "CLAUDE  "
 
 
 def test_live_frame_max_grew_for_led_hint() -> None:
-    assert preview.LIVE_FRAME_MAX == 72
+    assert preview.LIVE_FRAME_MAX == 75
 
 
 @pytest.mark.parametrize(
     "frame",
     [
-        "KP1|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # wrong prefix
-        "KP2|0|1|SUN|0|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
-        "KP2|0|1|SUN|0|A|B|C|D|E|F|G",  # too many fields
-        "KP2|0|1|SUN|0|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
-        "KP2|0|1|SUN|0|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
-        "KP2|0|1|MOON|0|A|B|C|D|E|",  # icon unknown to icon_from_field()
-        "KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",  # legacy frame: no IDX/TOTAL
-        "KP2|3|3|SUN|0|A|B|C|D|E|",  # idx must be < total
-        "KP2|0|0|SUN|0|A|B|C|D|E|",  # total must be >= 1
-        "KP2|x|1|SUN|0|A|B|C|D|E|",  # non-digit IDX
-        "KP2||1|SUN|0|A|B|C|D|E|",  # empty IDX field
-        "KP2|0||SUN|0|A|B|C|D|E|",  # empty TOTAL field
-        "KP2|0|1|SUN||A|B|C|D|E|",  # empty LED hint
-        "KP2|0|1|SUN|5|A|B|C|D|E|",  # unsupported LED hint
-        "KP2|0|1|SUN|00|A|B|C|D|E|",  # LED hint must be one digit
+        "KP2|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # old prefix is not accepted
+        "KP3|A|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be exactly two hex digits
+        "KP3|a0|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be uppercase hex
+        "KP3|GG|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be hex
+        "KP3|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
+        "KP3|A0|0|1|SUN|0|A|B|C|D|E|F|G",  # too many fields
+        "KP3|A0|0|1|SUN|0|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
+        "KP3|A0|0|1|SUN|0|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
+        "KP3|A0|0|1|MOON|0|A|B|C|D|E|",  # icon unknown to icon_from_field()
+        "KP3|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",  # legacy frame: no GEN/IDX/TOTAL
+        "KP3|A0|3|3|SUN|0|A|B|C|D|E|",  # idx must be < total
+        "KP3|A0|0|0|SUN|0|A|B|C|D|E|",  # total must be >= 1
+        "KP3|A0|x|1|SUN|0|A|B|C|D|E|",  # non-digit IDX
+        "KP3|A0||1|SUN|0|A|B|C|D|E|",  # empty IDX field
+        "KP3|A0|0||SUN|0|A|B|C|D|E|",  # empty TOTAL field
+        "KP3|A0|0|1|SUN||A|B|C|D|E|",  # empty LED hint
+        "KP3|A0|0|1|SUN|5|A|B|C|D|E|",  # unsupported LED hint
+        "KP3|A0|0|1|SUN|00|A|B|C|D|E|",  # LED hint must be one digit
     ],
 )
 def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
@@ -193,8 +200,8 @@ def test_live_text_is_right_aligned_like_firmware() -> None:
 
 
 def test_page_indicator_only_renders_for_multipage_deck() -> None:
-    single = preview.draw_top(STATE, preview.live_data_snapshot("KP2|0|1|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
-    multi = preview.draw_top(STATE, preview.live_data_snapshot("KP2|1|3|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
+    single = preview.draw_top(STATE, preview.live_data_snapshot("KP3|A0|0|1|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
+    multi = preview.draw_top(STATE, preview.live_data_snapshot("KP3|A0|1|3|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
     # Identical icon + lines: the only rendering difference is the "2/3" indicator.
     assert single.tobytes() != multi.tobytes()
     page_y = preview.LAYOUT["KEYPOINT_LIVE_PAGE_Y"]

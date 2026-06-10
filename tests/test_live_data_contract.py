@@ -9,6 +9,14 @@ LIVE_DATA_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data.h"
 LIVE_DATA_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data.c"
 STATUS_C = ROOT / "config/boards/shields/lpm_view/widgets/status.c"
 TRACKPAD_LED_C = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/custom_driver_left/trackpad_led.c"
+A320_C = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/custom_driver_left/a320.c"
+TRACKPOINT_C = ROOT / "config/boards/shields/right_trackpoint_keypoint/custom_driver_right/trackpoint_0x15.c"
+BOARD_CONFIGS = (
+    ROOT / "config/boards/arm/zitaotech_keypoint/Kconfig.defconfig",
+    ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint.conf",
+    ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_left_defconfig",
+    ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_right_defconfig",
+)
 STATUS_INFO_PANEL_H = ROOT / "config/boards/shields/lpm_view/widgets/status_info_panel.h"
 STATUS_LAYOUT_H = ROOT / "config/boards/shields/lpm_view/widgets/status_layout.h"
 UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
@@ -50,9 +58,10 @@ def test_live_data_firmware_contract_constants() -> None:
     assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 6" in text
     assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 8" in text
     assert "#define KEYPOINT_LIVE_DATA_ICON_MAX 8" in text
+    assert "#define KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX 2" in text
     assert "#define KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX 1" in text
     assert "#define KEYPOINT_LIVE_DATA_STALE_MS 360000" in text
-    assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP2|"' in text
+    assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP3|"' in text
 
 
 def test_live_data_deck_contract_constants() -> None:
@@ -60,14 +69,17 @@ def test_live_data_deck_contract_constants() -> None:
 
     assert "#define KEYPOINT_LIVE_DATA_PAGE_MAX 8" in text
     assert "#define KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX 1" in text
-    # Frame-max macro carries IDX/TOTAL plus the LED hint and their separators.
+    # Frame-max macro carries GEN, IDX/TOTAL plus the LED hint and their separators.
+    assert "(KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX + 1)" in text
     assert "((KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX + 1) * 2)" in text
     assert "(KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX + 1)" in text
     # Snapshot exposes the current page + deck size for the indicator.
     assert "uint8_t view_index;" in text
     assert "uint8_t total_pages;" in text
+    assert "uint8_t generation;" in text
     assert "enum keypoint_live_data_led_hint led_hint;" in text
-    # Parse signature yields idx/total/icon/led_hint.
+    # Parse signature yields generation/idx/total/icon/led_hint.
+    assert "uint8_t *generation" in text
     assert "uint8_t *idx, uint8_t *total" in text
     assert "enum keypoint_live_data_led_hint *led_hint" in text
 
@@ -77,7 +89,9 @@ def test_trackpad_led_consumes_live_data_hint_without_capslock_animation() -> No
 
     assert '#include "../../lpm_view/widgets/live_data.h"' in text
     assert "keypoint_live_data_snapshot_get()" in text
+    assert "live_confirm_start_ms" in text
     assert "live_snapshot.led_hint" in text
+    assert "snapshot.generation" in text
     assert "KEYPOINT_LIVE_DATA_LED_HINT_WARNING" in text
     assert "zmk_hid_indicators_get_current_profile" not in text
     assert "capslock" not in text.lower()
@@ -95,6 +109,17 @@ def test_live_data_page_navigation_listener() -> None:
     assert "ZMK_SUBSCRIPTION(keypoint_live_data_page_keys, zmk_position_state_changed)" in text
     # Wrap-around page advance over the deck.
     assert "(view_index + deck_total + delta) % deck_total" in text
+
+
+def test_live_data_uses_generation_staged_deck_commit() -> None:
+    text = LIVE_DATA_C.read_text()
+
+    assert "pending_deck[KEYPOINT_LIVE_DATA_PAGE_MAX]" in text
+    assert "pending_generation" in text
+    assert "pending_mask" in text
+    assert "received_mask_for_total(pending_total)" in text
+    assert "memcpy(deck, pending_deck, sizeof(deck));" in text
+    assert "deck_generation = pending_generation;" in text
 
 
 def test_status_widget_renders_page_indicator() -> None:
@@ -324,7 +349,7 @@ def test_live_data_icon_does_not_reduce_text_width() -> None:
     assert "KEYPOINT_LIVE_ICON_Y" in text
 
 
-def test_live_data_kp2_icon_contract_is_explicit() -> None:
+def test_live_data_kp3_icon_contract_is_explicit() -> None:
     header = LIVE_DATA_H.read_text()
     firmware = LIVE_DATA_C.read_text()
     status = STATUS_C.read_text()
@@ -369,10 +394,35 @@ def test_demo_sender_uses_same_limits() -> None:
 
     assert "TEXT_LINE_COUNT = 6" in text
     assert "LINE_MAX = 8" in text
+    assert "GENERATION_FIELD_MAX = 2" in text
     assert "LED_HINT_IDS" in text
     assert "ICON_IDS" in text
-    assert 'PREFIX = "KP2|"' in text
+    assert 'PREFIX = "KP3|"' in text
     assert 'CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"' in text
+
+
+def test_a320_touch_and_i2c_paths_are_fail_fast_without_capslock_mode() -> None:
+    text = A320_C.read_text()
+
+    assert "k_mutex_unlock(&a320_i2c_mutex);" in text
+    assert "ret = i2c_write_dt" in text
+    assert "ret = i2c_burst_read_dt" in text
+    assert "return ret;" in text
+    assert "last_touch_time" in text
+    assert "k_uptime_get_32() - last_touch_time" in text
+    assert "zmk_hid_indicators_changed" not in text
+    assert "capslock" not in text.lower()
+
+
+def test_capslock_indicator_path_is_removed_from_pointing_firmware() -> None:
+    sources = [A320_C, TRACKPOINT_C, *BOARD_CONFIGS]
+    joined = "\n".join(path.read_text() for path in sources)
+
+    assert "zmk_hid_indicators_changed" not in joined
+    assert "HID_INDICATORS" not in joined
+    assert "ZMK_HID_INDICATORS" not in joined
+    assert "ZMK_SPLIT_PERIPHERAL_HID_INDICATORS" not in joined
+    assert "capslock" not in joined.lower()
 
 
 def test_demo_sender_uses_data_time_not_send_time() -> None:

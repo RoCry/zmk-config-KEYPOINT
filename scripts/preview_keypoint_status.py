@@ -21,15 +21,15 @@ Simulates the firmware rendering pipeline instead of approximating it:
        image (top block: battery/output/live lines 1-3/icon, bottom block:
        live lines 4-6, health strip, profiles + layer).
 
-Icon bitmaps, layout constants and the KP2 live-data contract are parsed
+Icon bitmaps, layout constants and the KP3 live-data contract are parsed
 from the firmware sources so the preview cannot drift from them. The LVGL
 renderer behavior lives in keypoint_lvgl_sim.py; exact font glyph tables in
-keypoint_lvgl_fonts.py. RT cases feed demo KP2 frames through the same
+keypoint_lvgl_fonts.py. RT cases feed demo KP3 frames through the same
 parser the firmware uses for the BLE GATT write.
 
-Producers: the KP2 wire protocol and line-layout conventions are documented
+Producers: the KP3 wire protocol and line-layout conventions are documented
 in send_keypoint_live_demo.py. To check a candidate frame visually, run
-  uv run scripts/preview_keypoint_status.py --frame 'KP2|0|1|SUN|0|...'
+  uv run scripts/preview_keypoint_status.py --frame 'KP3|A0|0|1|SUN|0|...'
 which validates it like the firmware would and renders the resulting glass.
 """
 
@@ -134,7 +134,7 @@ def _parse_icon_names() -> tuple[str, ...]:
 ICON_NAMES = _parse_icon_names()
 
 
-def _parse_live_data_contract() -> tuple[str, int, int, int, int]:
+def _parse_live_data_contract() -> tuple[str, int, int, int, int, int]:
     source = _read_widget_source("live_data.h")
     prefix_match = re.search(r'#define KEYPOINT_LIVE_DATA_PREFIX "([^"]+)"', source)
     if prefix_match is None:
@@ -142,6 +142,7 @@ def _parse_live_data_contract() -> tuple[str, int, int, int, int]:
     values = {name: int(value) for name, value in re.findall(r"#define KEYPOINT_LIVE_DATA_(\w+) (\d+)", source)}
     return (
         prefix_match.group(1),
+        values["GENERATION_FIELD_MAX"],
         values["ICON_MAX"],
         values["LED_HINT_FIELD_MAX"],
         values["TEXT_LINE_COUNT"],
@@ -149,11 +150,19 @@ def _parse_live_data_contract() -> tuple[str, int, int, int, int]:
     )
 
 
-LIVE_PREFIX, LIVE_ICON_MAX, LIVE_LED_HINT_FIELD_MAX, LIVE_LINE_COUNT, LIVE_LINE_MAX = _parse_live_data_contract()
-# Two single-digit page fields precede ICON; one single-digit LED hint follows it.
+(
+    LIVE_PREFIX,
+    LIVE_GENERATION_FIELD_MAX,
+    LIVE_ICON_MAX,
+    LIVE_LED_HINT_FIELD_MAX,
+    LIVE_LINE_COUNT,
+    LIVE_LINE_MAX,
+) = _parse_live_data_contract()
+# GEN + two single-digit page fields precede ICON; one single-digit LED hint follows it.
 LIVE_PAGE_FIELD_MAX = 1  # MAX_PAGES = 8 -> idx 0..7, total 1..8 (one digit)
 LIVE_FRAME_MAX = (
     len(LIVE_PREFIX)
+    + (LIVE_GENERATION_FIELD_MAX + 1)
     + (LIVE_PAGE_FIELD_MAX + 1) * 2
     + (LIVE_LED_HINT_FIELD_MAX + 1)
     + LIVE_ICON_MAX
@@ -212,14 +221,15 @@ class LiveDataSnapshot:
     lines: tuple[str, ...]
     has_data: bool
     stale: bool
+    generation: int = 0
     view_index: int = 0
     total_pages: int = 1
 
 
-def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, int, tuple[str, ...]]:
+def parse_live_frame(frame: str | bytes) -> tuple[int, int, int, str, int, tuple[str, ...]]:
     """Port of keypoint_live_data_parse(); raises ValueError where the firmware
     rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED. Frame grammar:
-    KP2|IDX|TOTAL|ICON|LED|L1|..|L6."""
+    KP3|GEN|IDX|TOTAL|ICON|LED|L1|..|L6."""
     data = frame.encode() if isinstance(frame, str) else frame
     if len(data) > LIVE_FRAME_MAX:
         raise ValueError(f"frame longer than {LIVE_FRAME_MAX} bytes")
@@ -227,35 +237,43 @@ def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, int, tuple[str,
     if not data.startswith(prefix):
         raise ValueError(f"frame must start with {LIVE_PREFIX!r}")
 
-    # Fields after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3=LED, 4..(3+LINE_COUNT)=lines.
+    # Fields after the prefix:
+    # 0=GEN, 1=IDX, 2=TOTAL, 3=ICON, 4=LED, 5..(4+LINE_COUNT)=lines.
     fields = data[len(prefix) :].split(b"|")
-    expected = 4 + LIVE_LINE_COUNT
+    expected = 5 + LIVE_LINE_COUNT
     if len(fields) != expected:
         raise ValueError(f"expected {expected} fields, got {len(fields)}")
 
-    if not (fields[0].isdigit() and fields[1].isdigit()):
+    generation_field = fields[0].decode("latin-1")
+    if len(generation_field) != LIVE_GENERATION_FIELD_MAX or not all(
+        ch in "0123456789ABCDEF" for ch in generation_field
+    ):
+        raise ValueError(f"bad generation {generation_field!r}")
+    generation = int(generation_field, 16)
+
+    if not (fields[1].isdigit() and fields[2].isdigit()):
         raise ValueError("IDX/TOTAL must be decimal digits")
-    if len(fields[0]) > LIVE_PAGE_FIELD_MAX or len(fields[1]) > LIVE_PAGE_FIELD_MAX:
+    if len(fields[1]) > LIVE_PAGE_FIELD_MAX or len(fields[2]) > LIVE_PAGE_FIELD_MAX:
         raise ValueError("IDX/TOTAL exceed one digit")
-    idx, total = int(fields[0]), int(fields[1])
+    idx, total = int(fields[1]), int(fields[2])
     if total < 1 or not (0 <= idx < total):
         raise ValueError(f"bad page idx={idx} total={total}")
 
-    icon_field = fields[2].decode("latin-1")
+    icon_field = fields[3].decode("latin-1")
     if len(icon_field) > LIVE_ICON_MAX or icon_field not in ICON_NAMES:
         raise ValueError(f"unknown icon {icon_field!r}")
 
-    led_field = fields[3].decode("latin-1")
+    led_field = fields[4].decode("latin-1")
     if len(led_field) != LIVE_LED_HINT_FIELD_MAX or led_field not in {"0", "1", "2", "3", "4"}:
         raise ValueError(f"bad LED hint {led_field!r}")
     led_hint = int(led_field)
 
     lines = []
-    for raw in fields[4:]:
+    for raw in fields[5:]:
         if len(raw) > LIVE_LINE_MAX or any(not (0x20 <= b <= 0x7E) for b in raw):
             raise ValueError(f"bad line field {raw!r}")
         lines.append(raw.decode("ascii"))
-    return idx, total, icon_field, led_hint, tuple(lines)
+    return generation, idx, total, icon_field, led_hint, tuple(lines)
 
 
 def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapshot:
@@ -264,8 +282,10 @@ def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapsh
     if frame is None:
         lines = ("NO DATA", "WAITING") + ("",) * (LIVE_LINE_COUNT - 2)
         return LiveDataSnapshot("WARN", 0, lines, has_data=False, stale=False)
-    idx, total, icon, led_hint, lines = parse_live_frame(frame)
-    return LiveDataSnapshot(icon, led_hint, lines, has_data=True, stale=stale, view_index=idx, total_pages=total)
+    generation, idx, total, icon, led_hint, lines = parse_live_frame(frame)
+    return LiveDataSnapshot(
+        icon, led_hint, lines, has_data=True, stale=stale, generation=generation, view_index=idx, total_pages=total
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -516,12 +536,19 @@ def _kv(label: str, value: str) -> str:
     return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
 
 
-def _card(icon: str, *lines: str, idx: int = 0, total: int = 1, led_hint: int = 0) -> str:
-    """Build a KP2 frame; missing lines are sent empty."""
+def _card(
+    icon: str,
+    *lines: str,
+    generation: int = 0xA0,
+    idx: int = 0,
+    total: int = 1,
+    led_hint: int = 0,
+) -> str:
+    """Build a KP3 frame; missing lines are sent empty."""
     if len(lines) > LIVE_LINE_COUNT:
         raise ValueError(f"at most {LIVE_LINE_COUNT} lines, got {len(lines)}")
     padded = lines + ("",) * (LIVE_LINE_COUNT - len(lines))
-    return f"{LIVE_PREFIX}{idx}|{total}|{icon}|{led_hint}|" + "|".join(padded)
+    return f"{LIVE_PREFIX}{generation:02X}|{idx}|{total}|{icon}|{led_hint}|" + "|".join(padded)
 
 
 DEMO_CASES: tuple[PreviewCase, ...] = (
@@ -625,7 +652,7 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
 
 
 def write_frame_preview(frame: str, output: Path, scale: int = 4, stale: bool = False) -> Path:
-    """Producer helper: validate one KP2 frame and render the resulting glass."""
+    """Producer helper: validate one KP3 frame and render the resulting glass."""
     image = render_left_screen(DEMO_CASES[0].state, frame, stale=stale)
     output.parent.mkdir(parents=True, exist_ok=True)
     scale_image(image, scale).save(output)
@@ -636,7 +663,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render pixel-exact KEYPOINT left-screen (72x144 glass) previews.")
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
     parser.add_argument("--scale", type=int, default=4)
-    parser.add_argument("--frame", help="Render this single KP2 frame instead of the demo set.")
+    parser.add_argument("--frame", help="Render this single KP3 frame instead of the demo set.")
     parser.add_argument("--stale", action="store_true", help="Render --frame in the stale state.")
     args = parser.parse_args()
 

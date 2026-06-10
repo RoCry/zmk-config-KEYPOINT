@@ -17,8 +17,8 @@ Interpret the output:
   * CURRENT ACCEPTED (display shows SUNNY) -> new firmware works;
                             the earlier NO DATA was a stale/failed send.
   * CURRENT rejected -> firmware/parser/protocol mismatch. Flash the latest
-                            left.uf2 and make sure producer uses the latest KP2
-                            `IDX|TOTAL|ICON|LED|L1..L6` frame.
+                            left.uf2 and make sure producer uses the latest KP3
+                            `GEN|IDX|TOTAL|ICON|LED|L1..L6` frame.
   * connection / encryption error -> transport/pairing problem, not the parser.
 """
 
@@ -38,7 +38,7 @@ demo = importlib.util.module_from_spec(_spec)
 sys.modules["send_keypoint_live_demo"] = demo  # slotted @dataclass needs this registered
 _spec.loader.exec_module(demo)
 
-CURRENT_FRAME = b"KP2|0|1|SUN|0|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
+CURRENT_FRAME = b"KP3|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42"
 
 
 async def _run() -> None:
