@@ -12,7 +12,10 @@ Wire protocol (mirrors config/boards/shields/lpm_view/widgets/live_data.{h,c}):
 - Transport: BLE GATT write (with or without response) to CHAR_UUID under
   SERVICE_UUID on the LEFT (central) keyboard half. The characteristic
   requires an encrypted link, so the host must be paired with the keyboard.
-- Payload: ASCII "KP2|ICON|L1|L2|L3|L4|L5|L6", max 66 bytes, no newline.
+- Payload: ASCII "KP2|IDX|TOTAL|ICON|L1|L2|L3|L4|L5|L6", max 70 bytes, no newline.
+  * IDX/TOTAL: this card's 0-based page index and the deck size (each a single
+    decimal digit, TOTAL in 1..PAGE_MAX). The firmware stores the whole deck;
+    the keyboard's left keys page through it locally.
   * ICON: one of ICON_IDS, selects the 8x8 bitmap in the top status row
     (NONE shows no icon).
   * Exactly TEXT_LINE_COUNT (6) line fields; each 0..LINE_MAX (8) chars
@@ -62,6 +65,8 @@ PREFIX = "KP2|"
 ICON_MAX = 8
 TEXT_LINE_COUNT = 6
 LINE_MAX = 8
+PAGE_MAX = 8  # firmware deck capacity; idx/total are single decimal digits
+DEMO_DECK_SIZE = 3  # pages pushed per cycle so page navigation can be exercised
 ICON_IDS = frozenset(
     {
         "NONE",
@@ -404,6 +409,17 @@ def next_demo_source(
     return next(source_iter)
 
 
+def demo_deck(source_iter, rng: random.Random, randomize: bool, size: int) -> list[DemoSource]:
+    """Build a deck of `size` demo sources (the firmware stores the whole deck;
+    the keyboard's left keys page through it)."""
+    deck: list[DemoSource] = []
+    previous: DemoSource | None = None
+    for _ in range(size):
+        previous = next_demo_source(source_iter=source_iter, rng=rng, randomize=randomize, previous=previous)
+        deck.append(previous)
+    return deck
+
+
 def validate_icon(icon: str) -> None:
     if icon not in ICON_IDS:
         choices = ", ".join(sorted(ICON_IDS))
@@ -427,10 +443,12 @@ def validate_lines(lines: Sequence[str]) -> None:
                 raise ValueError(f"line {index} contains unsupported character {ch!r}")
 
 
-def build_frame(icon: str, lines: Sequence[str]) -> bytes:
+def build_frame(icon: str, lines: Sequence[str], *, idx: int = 0, total: int = 1) -> bytes:
     validate_icon(icon=icon)
     validate_lines(lines=lines)
-    return f"{PREFIX}{icon}|{'|'.join(lines)}".encode("ascii")
+    if not (1 <= total <= PAGE_MAX) or not (0 <= idx < total):
+        raise ValueError(f"bad page idx={idx} total={total} (PAGE_MAX={PAGE_MAX})")
+    return f"{PREFIX}{idx}|{total}|{icon}|{'|'.join(lines)}".encode("ascii")
 
 
 def lines_for_source(source: DemoSource, data_time: str) -> tuple[str, str, str, str, str, str]:
@@ -502,7 +520,7 @@ async def send_loop(
     target = await resolve_device(name=name, address=address, timeout=scan_timeout)
     source_iter = cycle(DEFAULT_DEMO_SOURCES)
     rng = random.Random(seed)
-    source = next_demo_source(source_iter=source_iter, rng=rng, randomize=randomize, previous=None)
+    deck = demo_deck(source_iter=source_iter, rng=rng, randomize=randomize, size=DEMO_DECK_SIZE)
     data_time = datetime.now().strftime("%H:%M")
     next_source_update = monotonic() + source_interval
     sent_count = 0
@@ -511,14 +529,18 @@ async def send_loop(
         while True:
             now = monotonic()
             if now >= next_source_update:
-                source = next_demo_source(source_iter=source_iter, rng=rng, randomize=randomize, previous=source)
+                deck = demo_deck(source_iter=source_iter, rng=rng, randomize=randomize, size=DEMO_DECK_SIZE)
                 data_time = datetime.now().strftime("%H:%M")
                 next_source_update = now + source_interval
 
-            frame = build_frame(icon=source.icon, lines=lines_for_source(source=source, data_time=data_time))
-
-            await client.write_gatt_char(CHAR_UUID, frame, response=False)
-            typer.echo(f"sent {frame.decode('ascii')}")
+            # Push the whole deck each cycle; the firmware owns page navigation.
+            total = len(deck)
+            for idx, source in enumerate(deck):
+                frame = build_frame(
+                    icon=source.icon, lines=lines_for_source(source=source, data_time=data_time), idx=idx, total=total
+                )
+                await client.write_gatt_char(CHAR_UUID, frame, response=False)
+                typer.echo(f"sent {frame.decode('ascii')}")
             sent_count += 1
 
             if once or (count is not None and sent_count >= count):
