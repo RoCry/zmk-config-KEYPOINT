@@ -17,7 +17,17 @@
 
 #include "trackpad_led.h"
 #include "a320.h"
+
+#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_STATUS)
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+#define TRACKPAD_LED_HAS_LIVE_DATA 1
 #include "../../lpm_view/widgets/live_data.h"
+#endif
+#endif
+
+#ifndef TRACKPAD_LED_HAS_LIVE_DATA
+#define TRACKPAD_LED_HAS_LIVE_DATA 0
+#endif
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -57,8 +67,11 @@ static uint8_t current_led_brt;
 
 static int64_t preview_until_ms;
 static int64_t usb_confirm_start_ms = -USB_CONFIRM_MS;
+
+#if TRACKPAD_LED_HAS_LIVE_DATA
 static int64_t next_live_refresh_ms;
 static struct keypoint_live_data_snapshot live_snapshot;
+#endif
 
 static void set_led_brightness(uint8_t level) {
     level = MIN(level, BRT_MAX);
@@ -96,6 +109,7 @@ static bool burst_active(int64_t elapsed_ms, int32_t period_ms, int32_t duration
 }
 
 static uint8_t live_data_level_at(int64_t now_ms) {
+#if TRACKPAD_LED_HAS_LIVE_DATA
     if (!live_snapshot.has_data) {
         return burst_active(now_ms, 60000, 60, 1) ? BRT_MIN : 0;
     }
@@ -127,6 +141,10 @@ static uint8_t live_data_level_at(int64_t now_ms) {
     default:
         return 0;
     }
+#else
+    ARG_UNUSED(now_ms);
+    return 0;
+#endif
 }
 
 static uint8_t led_level_at(int64_t now_ms) {
@@ -143,12 +161,16 @@ static uint8_t led_level_at(int64_t now_ms) {
 }
 
 static void refresh_live_snapshot_if_due(int64_t now_ms) {
+#if TRACKPAD_LED_HAS_LIVE_DATA
     if (now_ms < next_live_refresh_ms) {
         return;
     }
 
     live_snapshot = keypoint_live_data_snapshot_get();
     next_live_refresh_ms = now_ms + LIVE_REFRESH_MS;
+#else
+    ARG_UNUSED(now_ms);
+#endif
 }
 
 static void update_transport(enum zmk_transport transport, int64_t now_ms) {
@@ -242,8 +264,11 @@ static int indicator_tp_init(void) {
     touch_active = false;
     keyboard_active = false;
     preview_until_ms = 0;
+
+#if TRACKPAD_LED_HAS_LIVE_DATA
     next_live_refresh_ms = 0;
     live_snapshot = keypoint_live_data_snapshot_get();
+#endif
 
     if (selected_transport == ZMK_TRANSPORT_USB) {
         usb_confirm_start_ms = k_uptime_get();
