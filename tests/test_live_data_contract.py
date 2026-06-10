@@ -91,6 +91,12 @@ def test_status_uses_live_data_instead_of_wpm_chart() -> None:
     assert "select ZMK_WPM" not in kconfig
 
 
+def test_shared_widget_headers_are_guarded() -> None:
+    assert "#pragma once" in UTIL_H.read_text()
+    assert "#pragma once" in STATUS_INFO_PANEL_H.read_text()
+    assert "#pragma once" in STATUS_LAYOUT_H.read_text()
+
+
 def test_status_tracks_each_ble_profile_state() -> None:
     text = STATUS_C.read_text()
     util = UTIL_H.read_text()
