@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,136 +18,169 @@ def load_module():
     return module
 
 
-def test_status_preview_writes_full_screen_screenshots() -> None:
-    preview = load_module()
+preview = load_module()
 
+FRESH_FRAME = "KP2|SUN|SUNNY|TMP 24C|12:00"
+STATE = preview.StatusState(
+    battery=85,
+    charging=False,
+    transport="ble",
+    active_profile_index=0,
+    profile_connected=(True, False, False, False),
+    profile_bonded=(True, True, False, False),
+    layer_index=0,
+)
+
+
+# Glass-pixel positions of logical canvas pixels, following the simulated
+# pipeline (fixed-point -90 deg canvas rotation + lpm009m360a rotation=1):
+# top-canvas col c -> glass x (c<=36: c, else c+1), row r -> glass y
+# (r<=35: r+1, else r+2); middle-canvas rows land 68 glass rows lower.
+def glass_x(col: int) -> int:
+    return col if col <= 36 else col + 1
+
+
+def glass_y_top(row: int) -> int:
+    return row + 1 if row <= 35 else row + 2
+
+
+def glass_y_middle(row: int) -> int:
+    return row + 69 if row <= 35 else row + 70
+
+
+def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         output_dir = Path(tmp)
-        stale_names = (
-            "live_ok.png",
-            "live_stale.png",
-            "live_empty.png",
-            "profile_layer.png",
-            "status_contact_sheet.png",
-            "layer_base.png",
-            "layer_symbol.png",
-            "profile_grid.png",
-            "status_full_screen.png",
-        )
-        for stale_name in stale_names:
+        for stale_name in preview.STALE_PREVIEW_FILES:
             (output_dir / stale_name).write_bytes(b"stale")
 
         written = preview.write_preview_set(output_dir, scale=2)
 
         names = {path.name for path in written}
-        assert names == {
-            "screen_empty_symbol.png",
-            "screen_ok_base.png",
-            "screen_stale_lower.png",
-        }
+        assert names == {f"left_screen_{case.name}.png" for case in preview.DEMO_CASES}
         assert {path.name for path in output_dir.iterdir()} == names
 
         for path in written:
             with Image.open(path) as image:
                 assert image.mode == "L"
-                assert image.size == (preview.SCREEN_WIDTH * 2, preview.SCREEN_HEIGHT * 2)
+                assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
 
 
-def test_full_screen_screenshots_are_not_contact_sheets() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        output_dir = Path(tmp)
-        preview.write_preview_set(output_dir, scale=1)
-
-        with Image.open(output_dir / "screen_ok_base.png") as image:
-            assert image.mode == "L"
-            assert image.size == (preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT)
-
-
-def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
-    preview = load_module()
-
-    ok = preview.draw_live_data_canvas(
-        preview.LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok")
-    )
-    stale = preview.draw_live_data_canvas(
-        preview.LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="stale")
-    )
-    empty = preview.draw_live_data_canvas(
-        preview.LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty")
+def test_parse_live_frame_accepts_firmware_contract() -> None:
+    assert preview.parse_live_frame(FRESH_FRAME) == ("SUN", ("SUNNY", "TMP 24C", "12:00"))
+    assert preview.parse_live_frame("KP2|NONE|||") == ("NONE", ("", "", ""))
+    assert preview.parse_live_frame("KP2|CLAUDE|MAX8CHAR|ABCDEFGH|12345678") == (
+        "CLAUDE",
+        ("MAX8CHAR", "ABCDEFGH", "12345678"),
     )
 
-    assert ok.getpixel((2, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
-    assert ok.getpixel((35, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
-    assert ok.getpixel((69, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
 
-    assert stale.getpixel((2, preview.LIVE_HEALTH_Y)) == preview.STALE_FOREGROUND
-    assert stale.getpixel((10, preview.LIVE_HEALTH_Y)) == preview.BACKGROUND
-    assert stale.getpixel((20, preview.LIVE_HEALTH_Y)) == preview.STALE_FOREGROUND
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "KP1|SUN|SUNNY|TMP 24C|12:00",  # wrong prefix
+        "KP2|SUN|ONLY|TWO",  # too few fields
+        "KP2|SUN|A|B|C|D",  # too many fields
+        "KP2|SUN|NINECHARS|TMP 24C|12:00",  # line longer than LINE_MAX
+        "KP2|SUN|SUNNÝ|TMP 24C|12:00",  # non-printable-ascii byte
+        "KP2|MOON|A|B|C",  # icon unknown to icon_from_field()
+    ],
+)
+def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
+    with pytest.raises(ValueError):
+        preview.parse_live_frame(frame)
 
-    assert empty.getpixel((2, preview.LIVE_HEALTH_Y)) == preview.BACKGROUND
-    assert empty.getpixel((35, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
 
-
-def test_full_screen_preview_combines_live_data_and_info_panel() -> None:
-    preview = load_module()
-
-    image = preview.draw_full_screen_preview(
-        live=preview.LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok"),
-        profiles=(
-            preview.ProfilePreview(connected=True, bonded=True),
-            preview.ProfilePreview(connected=False, bonded=True),
-            preview.ProfilePreview(connected=False, bonded=False),
-            preview.ProfilePreview(connected=False, bonded=False),
-        ),
-        active_index=0,
-        layer_label="BASE",
+def test_no_data_snapshot_matches_firmware_fallback() -> None:
+    snapshot = preview.live_data_snapshot(None)
+    assert snapshot == preview.LiveDataSnapshot(
+        icon="WARN", lines=("NO DATA", "WAITING", ""), has_data=False, stale=False
     )
 
-    assert image.size == (preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT)
-    left_half = image.crop((0, 0, preview.CANVAS_SIZE, preview.SCREEN_HEIGHT))
-    right_half = image.crop((preview.RIGHT_CANVAS_X, 0, preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT))
-    assert min(left_half.tobytes()) < preview.BACKGROUND
-    assert min(right_half.tobytes()) < preview.BACKGROUND
+
+def test_stale_live_panel_is_invisible_at_1bit_depth() -> None:
+    # status.c dims stale data with LV_OPA_50; at LV_COLOR_DEPTH=1 LVGL's blend
+    # is a >LV_OPA_50 threshold, so the whole live panel vanishes on hardware.
+    fresh = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
+    stale = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME, stale=True)).image
+
+    panel = (0, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"], preview.CANVAS_SIZE, preview.CANVAS_SIZE)
+    assert min(fresh.crop(panel).tobytes()) == preview.BLACK
+    assert min(stale.crop(panel).tobytes()) == preview.WHITE
 
 
-def test_live_data_preview_uses_expanded_vertical_area() -> None:
-    preview = load_module()
+def test_live_text_is_right_aligned_like_firmware() -> None:
+    canvas = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
+    # Third line "12:00" is 40px wide, right-aligned in the 67px column at x=3:
+    # ink starts at x=30, so the left side of its band stays empty.
+    line_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + 2 * preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+    band = (0, line_y, 70, line_y + 9)
+    left_band = (0, line_y, 30, line_y + 9)
+    assert min(canvas.crop(band).tobytes()) == preview.BLACK
+    assert min(canvas.crop(left_band).tobytes()) == preview.WHITE
 
-    assert preview.LIVE_TEXT_Y <= 18
-    assert preview.LIVE_TEXT_LINE_HEIGHT >= 12
-    assert preview.LIVE_ICON_Y >= 56
-    assert preview.LIVE_DIVIDER_Y >= 67
-    assert preview.LIVE_HEALTH_Y >= 70
+
+def test_text_wider_than_max_width_fails_fast() -> None:
+    canvas = preview.Canvas(preview.CANVAS_SIZE)
+    with pytest.raises(ValueError, match="wider"):
+        canvas.draw_text(0, 0, 67, preview.FONT_UNSCII_8, "NINECHARS", align="left")
 
 
-def test_profile_layer_preview_keeps_profiles_small_and_layer_visible() -> None:
-    preview = load_module()
+def test_layer_info_text_matches_status_info_panel() -> None:
+    def with_layer(index: int, label: str | None):
+        return preview.StatusState(85, False, "ble", 0, STATE.profile_connected, STATE.profile_bonded, index, label)
 
-    assert preview.PROFILE_SLOT_WIDTH <= 18
-    assert preview.PROFILE_SLOT_HEIGHT <= 18
-    assert preview.PROFILE_MARK_SIZE <= 4
-    assert preview.PROFILE_SLOT_Y[0] >= 40
-    assert preview.PROFILE_SLOT_Y[0] + preview.PROFILE_SLOT_HEIGHT < preview.LAYER_TEXT_Y
-    assert preview.LAYER_TEXT_Y >= 60
+    assert preview.layer_info_text(with_layer(0, "ignored")) == "BASE"
+    assert preview.layer_info_text(with_layer(2, "  SYMBOL  ")) == "SYMBOL"
+    assert preview.layer_info_text(with_layer(7, None)) == "L7"
+    assert preview.layer_info_text(with_layer(7, "   ")) == "L7"
+    assert preview.layer_info_text(with_layer(1, "ABCDEFGHIJKLMNOPQ")) == "ABCDEFGHIJKLMNO"
 
-    image = preview.draw_profile_layer_canvas(
-        (
-            preview.ProfilePreview(connected=True, bonded=True),
-            preview.ProfilePreview(connected=False, bonded=True),
-            preview.ProfilePreview(connected=False, bonded=False),
-            preview.ProfilePreview(connected=False, bonded=False),
-        ),
-        active_index=0,
-        layer_label="LOWER",
-    )
 
-    assert image.getpixel((preview.PROFILE_SLOT_X[0] + 1, preview.PROFILE_SLOT_Y[0] + 1)) == preview.FOREGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[0] + 11, preview.PROFILE_SLOT_Y[0] + 11)) == preview.BACKGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[1] + 1, preview.PROFILE_SLOT_Y[1] + 1)) == preview.BACKGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[1], preview.PROFILE_SLOT_Y[1])) == preview.FOREGROUND
-    assert image.getpixel((preview.PROFILE_SLOT_X[2] + 11, preview.PROFILE_SLOT_Y[2] + 11)) == preview.FOREGROUND
-    assert image.getpixel((preview.LAYER_TEXT_X, preview.LAYER_TEXT_Y - 1)) == preview.BACKGROUND
-    layer_crop = image.crop((0, preview.LAYER_TEXT_Y, preview.CANVAS_SIZE, preview.CANVAS_SIZE))
-    assert min(layer_crop.tobytes()) < preview.BACKGROUND
+def test_glass_orientation_battery_top_profiles_bottom() -> None:
+    glass = preview.render_left_screen(STATE, FRESH_FRAME)
+
+    # Battery shell outline pixel: logical top canvas (0, 2).
+    assert glass.getpixel((glass_x(0), glass_y_top(2))) == preview.BLACK
+    # Active profile slot fill: logical middle canvas (2, KEYPOINT_PROFILE_ROW_Y).
+    row_y = preview.LAYOUT["KEYPOINT_PROFILE_ROW_Y"]
+    assert glass.getpixel((glass_x(2), glass_y_middle(row_y))) == preview.BLACK
+    # Layer text band near the glass bottom has ink.
+    layer_band = (0, glass_y_middle(preview.LAYOUT["KEYPOINT_LAYER_TEXT_Y"]), 72, 144)
+    assert min(glass.crop(layer_band).tobytes()) == preview.BLACK
+
+
+def test_glass_never_shows_divider_or_health_strip() -> None:
+    snapshot = preview.live_data_snapshot(FRESH_FRAME)
+    logical = preview.draw_top(STATE, snapshot).image
+    divider_y = preview.LAYOUT["KEYPOINT_LIVE_DIVIDER_Y"]
+    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
+    assert logical.getpixel((0, divider_y)) == preview.BLACK
+    assert logical.getpixel((2, health_y)) == preview.BLACK
+
+    # The middle canvas overlaps LVGL columns 68..71 of the top canvas and the
+    # fixed-point rotation drops the last source rows, so logical rows >= 66
+    # (divider + health strip) never reach the glass: those glass rows belong
+    # to the blank top of the profile canvas.
+    glass = preview.render_left_screen(STATE, FRESH_FRAME)
+    overlap_band = (0, 68, 72, 72)
+    assert min(glass.crop(overlap_band).tobytes()) == preview.WHITE
+    # Rotation artifact: the first glass row is always background.
+    assert min(glass.crop((0, 0, 72, 1)).tobytes()) == preview.WHITE
+
+
+def test_rotation_duplicates_center_row_and_column() -> None:
+    # LVGL's fixed-point -90 deg transform samples source row/col 36 twice.
+    glass = preview.render_left_screen(STATE, FRESH_FRAME)
+    assert glass.crop((36, 0, 37, 144)).tobytes() == glass.crop((37, 0, 38, 144)).tobytes()
+    assert glass.crop((0, 36, 72, 37)).tobytes() == glass.crop((0, 37, 72, 38)).tobytes()
+
+
+def test_output_symbol_matches_status_c_switch() -> None:
+    def state_for(transport: str, index: int):
+        return preview.StatusState(50, False, transport, index, STATE.profile_connected, STATE.profile_bonded, 0)
+
+    assert preview.output_symbol(state_for("usb", 0)) == preview.SYMBOL_USB
+    assert preview.output_symbol(state_for("ble", 0)) == preview.SYMBOL_WIFI  # connected
+    assert preview.output_symbol(state_for("ble", 1)) == preview.SYMBOL_CLOSE  # bonded, offline
+    assert preview.output_symbol(state_for("ble", 2)) == preview.SYMBOL_SETTINGS  # open

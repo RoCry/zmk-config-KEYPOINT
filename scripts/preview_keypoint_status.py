@@ -3,49 +3,497 @@
 # requires-python = ">=3.13"
 # dependencies = ["pillow>=11.0"]
 # ///
+"""Pixel-exact preview of the KEYPOINT left-hand (central) status screen.
+
+Simulates the firmware rendering pipeline instead of approximating it:
+
+  status.c draw_top/draw_middle (two logical 72x72 canvases: battery +
+  endpoint symbol + live-data panel, BLE profile grid + layer info)
+    -> LVGL 1-bit blending (LV_COLOR_DEPTH=1 turns opacity into a >50%
+       threshold, so the stale LV_OPA_50 style is INVISIBLE on hardware)
+    -> util.c rotate_canvas (LVGL v8 fixed-point -90 deg transform with its
+       resampling artifacts: row/col 36 doubled, last row/col dropped)
+    -> 144x72 LVGL screen composition (the middle canvas overlaps the top
+       canvas' last 4 columns, so the live panel's divider and health strip
+       never reach the glass)
+    -> lpm009m360a rotation=1 panel mapping: the visible 72x144 portrait
+       image (top block: battery/output/live data, bottom block: profiles
+       + layer).
+
+Icon bitmaps, layout constants and the KP2 live-data contract are parsed
+from the firmware sources so the preview cannot drift from them. The LVGL
+renderer behavior lives in keypoint_lvgl_sim.py; exact font glyph tables in
+keypoint_lvgl_fonts.py. RT cases feed demo KP2 frames through the same
+parser the firmware uses for the BLE GATT write.
+"""
 
 import argparse
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
-CANVAS_SIZE = 72
-SCREEN_WIDTH = 144
-SCREEN_HEIGHT = 72
-RIGHT_CANVAS_X = 68
-BACKGROUND = 255
-FOREGROUND = 0
-STALE_FOREGROUND = 150
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
 
-LIVE_ICON_SIZE = 8
-LIVE_ICON_X = 2
-LIVE_ICON_Y = 56
-LIVE_TEXT_X = 3
-LIVE_TEXT_Y = 18
-LIVE_TEXT_WIDTH = 67
-LIVE_TEXT_LINE_HEIGHT = 12
-LIVE_DIVIDER_Y = 67
-LIVE_HEALTH_Y = 70
-LIVE_HEALTH_X = 2
-LIVE_HEALTH_WIDTH = 68
+from keypoint_lvgl_sim import (  # noqa: E402
+    BLACK,
+    FONT_MONTSERRAT_16,
+    FONT_UNSCII_8,
+    LV_OPA_50,
+    LV_OPA_COVER,
+    WHITE,
+    Canvas,
+    Indexed2BitImage,
+    rotate_canvas,
+)
 
-PROFILE_SLOT_WIDTH = 15
-PROFILE_SLOT_HEIGHT = 14
-PROFILE_CORNER_SIZE = 4
-PROFILE_MARK_SIZE = 3
-PROFILE_MARK_X_OFFSET = 10
-PROFILE_MARK_Y_OFFSET = 9
-PROFILE_ROW_Y = 43
-PROFILE_SLOT_X = (2, 20, 38, 56)
-PROFILE_SLOT_Y = (PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y)
+ROOT = _SCRIPT_DIR.parent
+WIDGETS_DIR = ROOT / "config/boards/shields/lpm_view/widgets"
 
-LAYER_TEXT_X = 2
-LAYER_TEXT_Y = 61
-LAYER_TEXT_WIDTH = 68
+LVGL_SCREEN_WIDTH = 144
+LVGL_SCREEN_HEIGHT = 72
+MIDDLE_CANVAS_X = 68  # lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 68, 0) in status.c
+GLASS_WIDTH = 72
+GLASS_HEIGHT = 144
 
-STALE_COMPONENT_PREVIEW_FILES = (
+# LV_SYMBOL_* codepoints used by status.c draw_top().
+SYMBOL_USB = ""
+SYMBOL_WIFI = ""
+SYMBOL_CLOSE = ""
+SYMBOL_SETTINGS = ""
+
+Transport = Literal["usb", "ble"]
+
+
+# ---------------------------------------------------------------------------
+# Firmware source parsing (single source of truth for layout + contract)
+# ---------------------------------------------------------------------------
+
+
+def _read_widget_source(name: str) -> str:
+    return (WIDGETS_DIR / name).read_text()
+
+
+def _parse_layout_defines() -> dict[str, int]:
+    defines: dict[str, int] = {}
+    for source_name in ("status_layout.h", "util.h"):
+        for name, value in re.findall(r"#define\s+(\w+)\s+(-?\d+)\s*$", _read_widget_source(source_name), re.M):
+            defines[name] = int(value)
+    for required in ("CANVAS_SIZE", "KEYPOINT_LIVE_ICON_SIZE", "KEYPOINT_PROFILE_ROW_Y"):
+        if required not in defines:
+            raise ValueError(f"missing #define {required} in widget headers")
+    return defines
+
+
+LAYOUT = _parse_layout_defines()
+CANVAS_SIZE = LAYOUT["CANVAS_SIZE"]
+PROFILE_COUNT = LAYOUT["KEYPOINT_STATUS_PROFILE_COUNT"]
+
+
+def _parse_icon_bitmaps() -> dict[str, tuple[str, ...]]:
+    source = _read_widget_source("status_layout.h")
+    size = LAYOUT["KEYPOINT_LIVE_ICON_SIZE"]
+    icons: dict[str, tuple[str, ...]] = {}
+    for match in re.finditer(r"static const char icon_(\w+)\[[^]]*\]\[[^]]*\]\s*=\s*\{(.*?)\};", source, re.S):
+        rows = tuple(re.findall(r'"([01]+)"', match.group(2)))
+        if len(rows) != size or any(len(row) != size for row in rows):
+            raise ValueError(f"icon_{match.group(1)} is not {size}x{size}")
+        icons[match.group(1).upper()] = rows
+    if not icons:
+        raise ValueError("no icon bitmaps found in status_layout.h")
+    return icons
+
+
+ICONS = _parse_icon_bitmaps()
+
+
+def _parse_icon_names() -> tuple[str, ...]:
+    """Icon identifiers accepted by icon_from_field() in live_data.c."""
+    names = tuple(re.findall(r'strcmp\(field, "(\w+)"\)', _read_widget_source("live_data.c")))
+    if "NONE" not in names:
+        raise ValueError("icon_from_field() parse failed")
+    missing = [name for name in names if name != "NONE" and name not in ICONS]
+    if missing:
+        raise ValueError(f"icons accepted by live_data.c without bitmaps: {missing}")
+    return names
+
+
+ICON_NAMES = _parse_icon_names()
+
+
+def _parse_live_data_contract() -> tuple[str, int, int, int]:
+    source = _read_widget_source("live_data.h")
+    prefix_match = re.search(r'#define KEYPOINT_LIVE_DATA_PREFIX "([^"]+)"', source)
+    if prefix_match is None:
+        raise ValueError("KEYPOINT_LIVE_DATA_PREFIX not found")
+    values = {name: int(value) for name, value in re.findall(r"#define KEYPOINT_LIVE_DATA_(\w+) (\d+)", source)}
+    return prefix_match.group(1), values["ICON_MAX"], values["TEXT_LINE_COUNT"], values["LINE_MAX"]
+
+
+LIVE_PREFIX, LIVE_ICON_MAX, LIVE_LINE_COUNT, LIVE_LINE_MAX = _parse_live_data_contract()
+LIVE_FRAME_MAX = len(LIVE_PREFIX) + LIVE_ICON_MAX + (LIVE_LINE_COUNT * LIVE_LINE_MAX) + LIVE_LINE_COUNT
+
+
+def _parse_profile_slot_origins() -> tuple[tuple[int, int], ...]:
+    source = _read_widget_source("status_info_panel.h")
+    block_match = re.search(r"slot_offsets\[[^]]*\]\[2\]\s*=\s*\{(.*?)\};", source, re.S)
+    if block_match is None:
+        raise ValueError("slot_offsets not found in status_info_panel.h")
+    origins = []
+    for x_text, y_text in re.findall(r"\{(\w+),\s*(\w+)\}", block_match.group(1)):
+        origins.append((LAYOUT.get(x_text) or int(x_text), LAYOUT[y_text]))
+    if len(origins) != PROFILE_COUNT:
+        raise ValueError(f"expected {PROFILE_COUNT} profile slots, found {len(origins)}")
+    return tuple(origins)
+
+
+PROFILE_SLOT_ORIGINS = _parse_profile_slot_origins()
+
+
+def _parse_bolt_image() -> Indexed2BitImage:
+    """bolt.c charging glyph (LV_IMG_CF_INDEXED_2BIT)."""
+    source = _read_widget_source("bolt.c")
+    width = int(re.search(r"\.header\.w = (\d+)", source).group(1))
+    height = int(re.search(r"\.header\.h = (\d+)", source).group(1))
+    body = re.search(r"bolt_map\[\]\s*=\s*\{(.*?)\};", source, re.S).group(1)
+    raw = bytes(int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{1,2})", body))
+    stride = (width * 2 + 7) // 8
+    pixels = raw[-stride * height :]
+    # Last palette block before the bitmap = the non-inverted (#else) palette,
+    # 4 BGRA entries. At LV_COLOR_DEPTH=1 any bright channel maps to white.
+    palette_raw = raw[-stride * height - 16 : -stride * height]
+    palette = []
+    for index in range(4):
+        b, g, r, a = palette_raw[index * 4 : index * 4 + 4]
+        palette.append((WHITE if (r | g | b) & 0x80 else BLACK, a))
+    return width, height, tuple(palette), pixels
+
+
+BOLT_IMAGE = _parse_bolt_image()
+
+
+# ---------------------------------------------------------------------------
+# Live data (live_data.c port)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LiveDataSnapshot:
+    icon: str
+    lines: tuple[str, ...]
+    has_data: bool
+    stale: bool
+
+
+def parse_live_frame(frame: str | bytes) -> tuple[str, tuple[str, ...]]:
+    """Port of keypoint_live_data_parse(); raises ValueError where the firmware
+    rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED."""
+    data = frame.encode() if isinstance(frame, str) else frame
+    if len(data) > LIVE_FRAME_MAX:
+        raise ValueError(f"frame longer than {LIVE_FRAME_MAX} bytes")
+    prefix = LIVE_PREFIX.encode()
+    if not data.startswith(prefix):
+        raise ValueError(f"frame must start with {LIVE_PREFIX!r}")
+
+    icon_field = ""
+    lines = [""] * LIVE_LINE_COUNT
+    field = 0
+    for byte in data[len(prefix) :]:
+        if byte == ord("|"):
+            if field >= LIVE_LINE_COUNT:
+                raise ValueError("too many fields")
+            field += 1
+            continue
+        field_max = LIVE_ICON_MAX if field == 0 else LIVE_LINE_MAX
+        if not (0x20 <= byte <= 0x7E):
+            raise ValueError(f"non-printable byte 0x{byte:02x}")
+        if field == 0:
+            if len(icon_field) >= field_max:
+                raise ValueError("icon field too long")
+            icon_field += chr(byte)
+        else:
+            if len(lines[field - 1]) >= field_max:
+                raise ValueError(f"line {field} too long")
+            lines[field - 1] += chr(byte)
+
+    if field != LIVE_LINE_COUNT:
+        raise ValueError(f"expected {LIVE_LINE_COUNT} text fields, got {field}")
+    if icon_field not in ICON_NAMES:
+        raise ValueError(f"unknown icon {icon_field!r}")
+    return icon_field, tuple(lines)
+
+
+def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapshot:
+    """keypoint_live_data_snapshot_get(): WARN/NO DATA before the first frame,
+    stale keeps the last payload (which 1-bit rendering then hides)."""
+    if frame is None:
+        return LiveDataSnapshot("WARN", ("NO DATA", "WAITING", ""), has_data=False, stale=False)
+    icon, lines = parse_live_frame(frame)
+    return LiveDataSnapshot(icon, lines, has_data=True, stale=stale)
+
+
+# ---------------------------------------------------------------------------
+# Status state + widget drawing (status.c / util.c / status_info_panel.h port)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StatusState:
+    battery: int
+    charging: bool
+    transport: Transport
+    active_profile_index: int
+    profile_connected: tuple[bool, ...]
+    profile_bonded: tuple[bool, ...]
+    layer_index: int
+    layer_label: str | None = None
+
+    def __post_init__(self) -> None:
+        if not (0 <= self.battery <= 100):
+            raise ValueError(f"battery {self.battery} out of range")
+        if len(self.profile_connected) != PROFILE_COUNT or len(self.profile_bonded) != PROFILE_COUNT:
+            raise ValueError(f"profile states must have {PROFILE_COUNT} entries")
+        if not (0 <= self.active_profile_index < PROFILE_COUNT):
+            raise ValueError(f"active profile {self.active_profile_index} out of range")
+
+
+def draw_battery(canvas: Canvas, state: StatusState) -> None:
+    """util.c draw_battery(): 29x12 shell, fill = (battery + 2) / 4, nub, bolt."""
+    canvas.fill_rect(0, 2, 29, 12, BLACK)
+    canvas.fill_rect(1, 3, 27, 10, WHITE)
+    canvas.fill_rect(2, 4, (state.battery + 2) // 4, 8, BLACK)
+    canvas.fill_rect(30, 5, 3, 6, BLACK)
+    canvas.fill_rect(31, 6, 1, 4, WHITE)
+    if state.charging:
+        canvas.draw_indexed_2bit(9, -1, BOLT_IMAGE)
+
+
+def output_symbol(state: StatusState) -> str:
+    if state.transport == "usb":
+        return SYMBOL_USB
+    if state.profile_bonded[state.active_profile_index]:
+        if state.profile_connected[state.active_profile_index]:
+            return SYMBOL_WIFI
+        return SYMBOL_CLOSE
+    return SYMBOL_SETTINGS
+
+
+def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
+    # Stale style is LV_OPA_50 in status.c; at LV_COLOR_DEPTH=1 that means the
+    # whole panel (icon, text, divider, health strip) disappears on hardware.
+    opa = LV_OPA_50 if snapshot.stale else LV_OPA_COVER
+
+    if snapshot.icon != "NONE":
+        for row, bits in enumerate(ICONS[snapshot.icon]):
+            for col, bit in enumerate(bits):
+                if bit == "1":
+                    canvas.fill_rect(
+                        LAYOUT["KEYPOINT_LIVE_ICON_X"] + col,
+                        LAYOUT["KEYPOINT_LIVE_ICON_Y"] + row,
+                        1,
+                        1,
+                        BLACK,
+                        opa,
+                    )
+
+    for index, line in enumerate(snapshot.lines):
+        canvas.draw_text(
+            LAYOUT["KEYPOINT_LIVE_TEXT_X"],
+            LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"],
+            LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
+            FONT_UNSCII_8,
+            line,
+            align="right",
+            opa=opa,
+        )
+
+    canvas.hline(0, LAYOUT["KEYPOINT_LIVE_DIVIDER_WIDTH"], LAYOUT["KEYPOINT_LIVE_DIVIDER_Y"], BLACK, opa)
+
+    # Health strip geometry from status.c draw_live_data_health_strip().
+    health_y = LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
+    health_h = LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
+    if not snapshot.has_data:
+        canvas.fill_rect(30, health_y, 13, health_h, BLACK, opa)
+    elif snapshot.stale:
+        for segment_x in (2, 18, 34, 50, 64):
+            canvas.fill_rect(segment_x, health_y, 6, health_h, BLACK, opa)
+    else:
+        canvas.fill_rect(
+            LAYOUT["KEYPOINT_LIVE_HEALTH_X"], health_y, LAYOUT["KEYPOINT_LIVE_HEALTH_WIDTH"], health_h, BLACK, opa
+        )
+
+
+def draw_top(state: StatusState, snapshot: LiveDataSnapshot) -> Canvas:
+    canvas = Canvas(CANVAS_SIZE)
+    draw_battery(canvas, state)
+    canvas.draw_text(0, 0, CANVAS_SIZE, FONT_MONTSERRAT_16, output_symbol(state), align="right")
+    draw_live_data_panel(canvas, snapshot)
+    return canvas
+
+
+def _draw_rect_outline(canvas: Canvas, x: int, y: int, w: int, h: int, color: int) -> None:
+    canvas.fill_rect(x, y, w, 1, color)
+    canvas.fill_rect(x, y + h - 1, w, 1, color)
+    canvas.fill_rect(x, y, 1, h, color)
+    canvas.fill_rect(x + w - 1, y, 1, h, color)
+
+
+def _draw_profile_slot(canvas: Canvas, state: StatusState, index: int, x: int, y: int) -> None:
+    slot_w = LAYOUT["KEYPOINT_PROFILE_SLOT_WIDTH"]
+    slot_h = LAYOUT["KEYPOINT_PROFILE_SLOT_HEIGHT"]
+    corner = LAYOUT["KEYPOINT_PROFILE_CORNER_SIZE"]
+    mark = LAYOUT["KEYPOINT_PROFILE_MARK_SIZE"]
+    active = index == state.active_profile_index
+    connected = state.profile_connected[index]
+    bonded = state.profile_bonded[index]
+
+    if active:
+        canvas.fill_rect(x, y, slot_w, slot_h, BLACK)
+    elif bonded:
+        _draw_rect_outline(canvas, x, y, slot_w, slot_h, BLACK)
+    else:
+        right = x + slot_w - 1
+        bottom = y + slot_h - 1
+        canvas.fill_rect(x, y, corner, 1, BLACK)
+        canvas.fill_rect(x, y, 1, corner, BLACK)
+        canvas.fill_rect(right - corner + 1, y, corner, 1, BLACK)
+        canvas.fill_rect(right, y, 1, corner, BLACK)
+        canvas.fill_rect(x, bottom, corner, 1, BLACK)
+        canvas.fill_rect(x, bottom - corner + 1, 1, corner, BLACK)
+        canvas.fill_rect(right - corner + 1, bottom, corner, 1, BLACK)
+        canvas.fill_rect(right, bottom - corner + 1, 1, corner, BLACK)
+
+    ink = WHITE if active else BLACK
+    canvas.draw_text(x + 1, y + 1, 9, FONT_UNSCII_8, str(index + 1), align="left", color=ink)
+
+    mark_x = x + LAYOUT["KEYPOINT_PROFILE_MARK_X_OFFSET"]
+    mark_y = y + LAYOUT["KEYPOINT_PROFILE_MARK_Y_OFFSET"]
+    if connected:
+        canvas.fill_rect(mark_x, mark_y, mark, mark, ink)
+    elif bonded:
+        _draw_rect_outline(canvas, mark_x, mark_y, mark, mark, ink)
+    else:
+        center = mark // 2
+        canvas.fill_rect(mark_x + center, mark_y, 1, mark, ink)
+        canvas.fill_rect(mark_x, mark_y + center, mark, 1, ink)
+
+
+def layer_info_text(state: StatusState) -> str:
+    """layer_info_text() in status_info_panel.h, incl. its 16-byte fallback buffer."""
+    if state.layer_index == 0:
+        return "BASE"
+    if state.layer_label is not None:
+        label = state.layer_label.strip()[:15]
+        if label:
+            return label
+    return f"L{state.layer_index}"
+
+
+def draw_middle(state: StatusState) -> Canvas:
+    canvas = Canvas(CANVAS_SIZE)
+    for index, (x, y) in enumerate(PROFILE_SLOT_ORIGINS):
+        _draw_profile_slot(canvas, state, index, x, y)
+    canvas.draw_text(
+        LAYOUT["KEYPOINT_LAYER_TEXT_X"],
+        LAYOUT["KEYPOINT_LAYER_TEXT_Y"],
+        LAYOUT["KEYPOINT_LAYER_TEXT_WIDTH"],
+        FONT_UNSCII_8,
+        layer_info_text(state),
+        align="center",
+    )
+    return canvas
+
+
+# ---------------------------------------------------------------------------
+# Screen composition + glass view
+# ---------------------------------------------------------------------------
+
+
+def render_lvgl_screen(state: StatusState, snapshot: LiveDataSnapshot) -> Image.Image:
+    """The 144x72 LVGL screen: both rotated canvases; the middle canvas is an
+    opaque sibling drawn over the top canvas' last 4 columns."""
+    screen = Image.new("L", (LVGL_SCREEN_WIDTH, LVGL_SCREEN_HEIGHT), WHITE)
+    screen.paste(rotate_canvas(draw_top(state, snapshot)).image, (0, 0))
+    screen.paste(rotate_canvas(draw_middle(state)).image, (MIDDLE_CANVAS_X, 0))
+    return screen
+
+
+def glass_view(screen: Image.Image) -> Image.Image:
+    """lpm009m360a rotation=1 maps LVGL (x, y) to panel line 143-x, column y;
+    the panel is mounted so content reads upright: a 72x144 portrait image with
+    glass(gx, gy) = lvgl(gy, 71 - gx). Top block: live data, bottom: profiles."""
+    out = Image.new("L", (GLASS_WIDTH, GLASS_HEIGHT), WHITE)
+    src = screen.load()
+    dst = out.load()
+    for gy in range(GLASS_HEIGHT):
+        for gx in range(GLASS_WIDTH):
+            dst[gx, gy] = src[gy, GLASS_WIDTH - 1 - gx]
+    return out
+
+
+def render_left_screen(state: StatusState, frame: str | None, stale: bool = False) -> Image.Image:
+    return glass_view(render_lvgl_screen(state, live_data_snapshot(frame, stale=stale)))
+
+
+# ---------------------------------------------------------------------------
+# Demo cases + CLI
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewCase:
+    name: str
+    state: StatusState
+    frame: str | None = None
+    stale: bool = False
+
+
+_PROFILES_CONNECTED = (True, False, False, False)
+_PROFILES_BONDED = (True, True, False, False)
+
+DEMO_CASES: tuple[PreviewCase, ...] = (
+    PreviewCase(
+        name="rt_sun_base",
+        state=StatusState(85, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame="KP2|SUN|SUNNY|TMP 24C|12:00",
+    ),
+    PreviewCase(
+        name="rt_claude_usb_charging",
+        state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
+        frame="KP2|CLAUDE|CLAUDE|TOK 81%|14:32",
+    ),
+    PreviewCase(
+        # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; the stale
+        # live panel is blank on hardware (LV_OPA_50 at 1-bit depth).
+        name="rt_codex_stale",
+        state=StatusState(72, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame="KP2|CODEX|CODEX|7D 45%|09:30",
+        stale=True,
+    ),
+    PreviewCase(
+        name="rt_rain_max_width",
+        state=StatusState(100, True, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 7),
+        frame="KP2|RAIN|RAIN 8MM|WIND 12M|18:05:33",
+    ),
+    PreviewCase(
+        # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever
+        # received -> WARN / NO DATA / WAITING with the short health bar.
+        name="no_data_open_profile",
+        state=StatusState(15, False, "ble", 2, _PROFILES_CONNECTED, _PROFILES_BONDED, 2, "SYMBOL"),
+    ),
+)
+
+STALE_PREVIEW_FILES = (
+    # Pre-glass-simulation outputs.
+    "screen_ok_base.png",
+    "screen_stale_lower.png",
+    "screen_empty_symbol.png",
+    # Component-era outputs.
     "live_ok.png",
     "live_stale.png",
     "live_empty.png",
@@ -57,284 +505,6 @@ STALE_COMPONENT_PREVIEW_FILES = (
     "status_full_screen.png",
 )
 
-HealthState = Literal["ok", "stale", "empty"]
-
-
-@dataclass(frozen=True, slots=True)
-class LiveDataPreview:
-    icon: str
-    lines: tuple[str, str, str]
-    health: HealthState
-
-
-@dataclass(frozen=True, slots=True)
-class ProfilePreview:
-    connected: bool
-    bonded: bool
-
-
-ICONS: dict[str, tuple[str, ...]] = {
-    "NONE": ("00000000",) * LIVE_ICON_SIZE,
-    "SUN": (
-        "00100100",
-        "00011000",
-        "10111101",
-        "01111110",
-        "01111110",
-        "10111101",
-        "00011000",
-        "00100100",
-    ),
-    "CLOUD": (
-        "00000000",
-        "00111000",
-        "01111100",
-        "11111110",
-        "11111110",
-        "01111100",
-        "00000000",
-        "00000000",
-    ),
-    "RAIN": (
-        "00111000",
-        "01111100",
-        "11111110",
-        "01111100",
-        "00000000",
-        "01001000",
-        "10010000",
-        "00100100",
-    ),
-    "TEMP": (
-        "00110000",
-        "01001000",
-        "01001000",
-        "01001000",
-        "01001000",
-        "10000100",
-        "10000100",
-        "01111000",
-    ),
-    "WARN": (
-        "00010000",
-        "00111000",
-        "00111000",
-        "01101100",
-        "01101100",
-        "11111110",
-        "11101110",
-        "11111110",
-    ),
-    "CODE": (
-        "10000010",
-        "01000100",
-        "00101000",
-        "00010000",
-        "00101000",
-        "01000100",
-        "10000010",
-        "00010000",
-    ),
-    "TIME": (
-        "00111100",
-        "01000010",
-        "10010001",
-        "10010001",
-        "10011101",
-        "10000001",
-        "01000010",
-        "00111100",
-    ),
-    "CODEX": (
-        "00111100",
-        "01011010",
-        "10100101",
-        "10111101",
-        "10111101",
-        "10100101",
-        "01011010",
-        "00111100",
-    ),
-    "CLAUDE": (
-        "00010000",
-        "00010000",
-        "01010100",
-        "00111000",
-        "11111110",
-        "00111000",
-        "01010100",
-        "00010000",
-    ),
-}
-
-
-def font() -> ImageFont.ImageFont:
-    return ImageFont.load_default()
-
-
-def new_canvas() -> Image.Image:
-    return Image.new("L", (CANVAS_SIZE, CANVAS_SIZE), BACKGROUND)
-
-
-def new_screen() -> Image.Image:
-    return Image.new("L", (SCREEN_WIDTH, SCREEN_HEIGHT), BACKGROUND)
-
-
-def draw_rect_outline(draw: ImageDraw.ImageDraw, x: int, y: int, width: int, height: int, fill: int) -> None:
-    draw.rectangle((x, y, x + width - 1, y + height - 1), outline=fill)
-
-
-def draw_plus_marker(draw: ImageDraw.ImageDraw, x: int, y: int, fill: int) -> None:
-    center = PROFILE_MARK_SIZE // 2
-    draw.rectangle((x + center, y, x + center, y + PROFILE_MARK_SIZE - 1), fill=fill)
-    draw.rectangle((x, y + center, x + PROFILE_MARK_SIZE - 1, y + center), fill=fill)
-
-
-def draw_corner_slot(draw: ImageDraw.ImageDraw, x: int, y: int, fill: int) -> None:
-    corner = PROFILE_CORNER_SIZE
-    right = x + PROFILE_SLOT_WIDTH - 1
-    bottom = y + PROFILE_SLOT_HEIGHT - 1
-    draw.rectangle((x, y, x + corner - 1, y), fill=fill)
-    draw.rectangle((x, y, x, y + corner - 1), fill=fill)
-    draw.rectangle((right - corner + 1, y, right, y), fill=fill)
-    draw.rectangle((right, y, right, y + corner - 1), fill=fill)
-    draw.rectangle((x, bottom, x + corner - 1, bottom), fill=fill)
-    draw.rectangle((x, bottom - corner + 1, x, bottom), fill=fill)
-    draw.rectangle((right - corner + 1, bottom, right, bottom), fill=fill)
-    draw.rectangle((right, bottom - corner + 1, right, bottom), fill=fill)
-
-
-def draw_bitmap_icon(draw: ImageDraw.ImageDraw, icon: str, fill: int) -> None:
-    for row, bits in enumerate(ICONS[icon]):
-        for column, bit in enumerate(bits):
-            if bit == "1":
-                x = LIVE_ICON_X + column
-                y = LIVE_ICON_Y + row
-                draw.point((x, y), fill=fill)
-
-
-def draw_health_strip(draw: ImageDraw.ImageDraw, health: HealthState) -> None:
-    if health == "ok":
-        draw.rectangle(
-            (LIVE_HEALTH_X, LIVE_HEALTH_Y, LIVE_HEALTH_X + LIVE_HEALTH_WIDTH - 1, LIVE_HEALTH_Y + 1),
-            fill=FOREGROUND,
-        )
-        return
-
-    if health == "stale":
-        for start in (2, 18, 34, 50, 64):
-            draw.rectangle((start, LIVE_HEALTH_Y, min(start + 5, 69), LIVE_HEALTH_Y + 1), fill=STALE_FOREGROUND)
-        return
-
-    draw.rectangle((30, LIVE_HEALTH_Y, 42, LIVE_HEALTH_Y + 1), fill=FOREGROUND)
-
-
-def draw_live_data_canvas(state: LiveDataPreview) -> Image.Image:
-    image = new_canvas()
-    draw = ImageDraw.Draw(image)
-    fill = STALE_FOREGROUND if state.health == "stale" else FOREGROUND
-
-    draw_bitmap_icon(draw, state.icon, fill=fill)
-    for index, line in enumerate(state.lines):
-        draw.text(
-            (LIVE_TEXT_X, LIVE_TEXT_Y + (index * LIVE_TEXT_LINE_HEIGHT)),
-            line[:8],
-            fill=fill,
-            font=font(),
-        )
-
-    draw.line((0, LIVE_DIVIDER_Y, 70, LIVE_DIVIDER_Y), fill=fill)
-    draw_health_strip(draw, state.health)
-    return image
-
-
-def draw_profile_slot(
-    draw: ImageDraw.ImageDraw, profile: ProfilePreview, active: bool, x: int, y: int, label: str
-) -> None:
-    if active:
-        draw.rectangle((x, y, x + PROFILE_SLOT_WIDTH - 1, y + PROFILE_SLOT_HEIGHT - 1), fill=FOREGROUND)
-        text_fill = BACKGROUND
-        mark_fill = BACKGROUND
-    else:
-        text_fill = FOREGROUND
-        mark_fill = FOREGROUND
-        if profile.bonded:
-            draw_rect_outline(draw, x, y, PROFILE_SLOT_WIDTH, PROFILE_SLOT_HEIGHT, fill=FOREGROUND)
-        else:
-            draw_corner_slot(draw, x, y, fill=FOREGROUND)
-
-    draw.text((x + 1, y + 1), label, fill=text_fill, font=font())
-
-    mark_x = x + PROFILE_MARK_X_OFFSET
-    mark_y = y + PROFILE_MARK_Y_OFFSET
-    if profile.connected:
-        draw.rectangle((mark_x, mark_y, mark_x + PROFILE_MARK_SIZE - 1, mark_y + PROFILE_MARK_SIZE - 1), fill=mark_fill)
-    elif profile.bonded:
-        draw_rect_outline(draw, mark_x, mark_y, PROFILE_MARK_SIZE, PROFILE_MARK_SIZE, fill=mark_fill)
-    else:
-        draw_plus_marker(draw, mark_x, mark_y, fill=mark_fill)
-
-
-def draw_profile_grid_canvas(profiles: tuple[ProfilePreview, ...], active_index: int) -> Image.Image:
-    if len(profiles) != 4:
-        raise ValueError("expected exactly four profile previews")
-
-    image = new_canvas()
-    draw = ImageDraw.Draw(image)
-    for index, profile in enumerate(profiles):
-        draw_profile_slot(
-            draw,
-            profile=profile,
-            active=index == active_index,
-            x=PROFILE_SLOT_X[index],
-            y=PROFILE_SLOT_Y[index],
-            label=str(index + 1),
-        )
-    return image
-
-
-def draw_layer_info_canvas(label: str) -> Image.Image:
-    image = new_canvas()
-    draw = ImageDraw.Draw(image)
-    draw_layer_info(draw, label=label)
-    return image
-
-
-def draw_layer_info(draw: ImageDraw.ImageDraw, label: str) -> None:
-    text = label.strip()[:8]
-    bbox = draw.textbbox((0, 0), text, font=font())
-    text_width = bbox[2] - bbox[0]
-    draw.text(
-        (
-            LAYER_TEXT_X + (LAYER_TEXT_WIDTH - text_width) // 2,
-            LAYER_TEXT_Y,
-        ),
-        text,
-        fill=FOREGROUND,
-        font=font(),
-    )
-
-
-def draw_profile_layer_canvas(profiles: tuple[ProfilePreview, ...], active_index: int, layer_label: str) -> Image.Image:
-    image = draw_profile_grid_canvas(profiles=profiles, active_index=active_index)
-    draw_layer_info(ImageDraw.Draw(image), label=layer_label)
-    return image
-
-
-def draw_full_screen_preview(
-    live: LiveDataPreview,
-    profiles: tuple[ProfilePreview, ...],
-    active_index: int,
-    layer_label: str,
-) -> Image.Image:
-    screen = new_screen()
-    screen.paste(draw_live_data_canvas(live), (0, 0))
-    screen.paste(
-        draw_profile_layer_canvas(profiles=profiles, active_index=active_index, layer_label=layer_label),
-        (RIGHT_CANVAS_X, 0),
-    )
-    return screen
-
 
 def scale_image(image: Image.Image, scale: int) -> Image.Image:
     if scale <= 1:
@@ -344,56 +514,20 @@ def scale_image(image: Image.Image, scale: int) -> Image.Image:
 
 def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    for stale_name in STALE_COMPONENT_PREVIEW_FILES:
+    for stale_name in STALE_PREVIEW_FILES:
         (output_dir / stale_name).unlink(missing_ok=True)
 
-    profiles = (
-        ProfilePreview(connected=True, bonded=True),
-        ProfilePreview(connected=False, bonded=True),
-        ProfilePreview(connected=False, bonded=False),
-        ProfilePreview(connected=False, bonded=False),
-    )
-    samples = [
-        (
-            "screen_ok_base.png",
-            draw_full_screen_preview(
-                live=LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok"),
-                profiles=profiles,
-                active_index=0,
-                layer_label="BASE",
-            ),
-        ),
-        (
-            "screen_stale_lower.png",
-            draw_full_screen_preview(
-                live=LiveDataPreview(icon="CODEX", lines=("CODEX", "7D 45%", "12:00"), health="stale"),
-                profiles=profiles,
-                active_index=1,
-                layer_label="LOWER",
-            ),
-        ),
-        (
-            "screen_empty_symbol.png",
-            draw_full_screen_preview(
-                live=LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty"),
-                profiles=profiles,
-                active_index=0,
-                layer_label="SYMBOL",
-            ),
-        ),
-    ]
-
     written: list[Path] = []
-    for name, image in samples:
-        output = output_dir / name
+    for case in DEMO_CASES:
+        image = render_left_screen(case.state, case.frame, stale=case.stale)
+        output = output_dir / f"left_screen_{case.name}.png"
         scale_image(image, scale).save(output)
         written.append(output)
-
     return written
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render KEYPOINT 144x72 status UI screenshot previews.")
+    parser = argparse.ArgumentParser(description="Render pixel-exact KEYPOINT left-screen (72x144 glass) previews.")
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
     parser.add_argument("--scale", type=int, default=4)
     args = parser.parse_args()
