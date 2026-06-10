@@ -116,6 +116,8 @@ def test_live_frame_max_grew_for_page_fields() -> None:
         "KP2|3|3|SUN|A|B|C|D|E|",  # idx must be < total
         "KP2|0|0|SUN|A|B|C|D|E|",  # total must be >= 1
         "KP2|x|1|SUN|A|B|C|D|E|",  # non-digit IDX
+        "KP2||1|SUN|A|B|C|D|E|",  # empty IDX field
+        "KP2|0||SUN|A|B|C|D|E|",  # empty TOTAL field
     ],
 )
 def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:

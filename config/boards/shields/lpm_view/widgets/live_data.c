@@ -126,6 +126,9 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, ui
             if (field >= 2 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
                 return -EINVAL;
             }
+            if ((field == 0 || field == 1) && column == 0) {
+                return -EINVAL; /* empty IDX/TOTAL field */
+            }
             field++;
             column = 0;
             continue;
