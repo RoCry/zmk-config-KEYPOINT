@@ -13,8 +13,11 @@
 #define KEYPOINT_LIVE_ICON_SCALE 1
 #define KEYPOINT_LIVE_ICON_X 38
 #define KEYPOINT_LIVE_ICON_Y 4
+/* Top lines sit low (text y=26) and extra lines start at the very top of the
+ * middle canvas, so the glass shows an even rhythm: ~10px below the status
+ * row, 4px between lines, ~10px across the canvas seam. */
 #define KEYPOINT_LIVE_TEXT_X 3
-#define KEYPOINT_LIVE_TEXT_Y 18
+#define KEYPOINT_LIVE_TEXT_Y 26
 #define KEYPOINT_LIVE_TEXT_WIDTH 67
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
 
@@ -23,7 +26,7 @@
  * canvas, above the profile row. Canvas rows >= 66 never reach the glass
  * (middle-canvas overlap + rotate_canvas clipping), so keep content above. */
 #define KEYPOINT_LIVE_TOP_LINE_COUNT 3
-#define KEYPOINT_LIVE_EXTRA_TEXT_Y 2
+#define KEYPOINT_LIVE_EXTRA_TEXT_Y 0
 #define KEYPOINT_LIVE_HEALTH_X 2
 #define KEYPOINT_LIVE_HEALTH_Y 38
 #define KEYPOINT_LIVE_HEALTH_WIDTH 68
