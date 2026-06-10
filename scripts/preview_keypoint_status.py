@@ -29,18 +29,18 @@ LIVE_HEALTH_X = 2
 LIVE_HEALTH_WIDTH = 68
 
 PROFILE_SLOT_WIDTH = 15
-PROFILE_SLOT_HEIGHT = 16
+PROFILE_SLOT_HEIGHT = 14
 PROFILE_CORNER_SIZE = 4
 PROFILE_MARK_SIZE = 3
 PROFILE_MARK_X_OFFSET = 10
-PROFILE_MARK_Y_OFFSET = 10
+PROFILE_MARK_Y_OFFSET = 9
+PROFILE_ROW_Y = 43
 PROFILE_SLOT_X = (2, 20, 38, 56)
-PROFILE_SLOT_Y = (3, 3, 3, 3)
+PROFILE_SLOT_Y = (PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y, PROFILE_ROW_Y)
 
-LAYER_CHIP_X = 2
-LAYER_CHIP_Y = 28
-LAYER_CHIP_WIDTH = 68
-LAYER_CHIP_HEIGHT = 28
+LAYER_TEXT_X = 2
+LAYER_TEXT_Y = 61
+LAYER_TEXT_WIDTH = 68
 
 HealthState = Literal["ok", "stale", "empty"]
 
@@ -274,23 +274,21 @@ def draw_profile_grid_canvas(profiles: tuple[ProfilePreview, ...], active_index:
     return image
 
 
-def draw_layer_chip_canvas(label: str) -> Image.Image:
+def draw_layer_info_canvas(label: str) -> Image.Image:
     image = new_canvas()
     draw = ImageDraw.Draw(image)
-    draw_layer_chip(draw, label=label)
+    draw_layer_info(draw, label=label)
     return image
 
 
-def draw_layer_chip(draw: ImageDraw.ImageDraw, label: str) -> None:
-    draw_rect_outline(draw, LAYER_CHIP_X, LAYER_CHIP_Y, LAYER_CHIP_WIDTH, LAYER_CHIP_HEIGHT, fill=FOREGROUND)
-    text = label[:8]
+def draw_layer_info(draw: ImageDraw.ImageDraw, label: str) -> None:
+    text = label.strip()[:8]
     bbox = draw.textbbox((0, 0), text, font=font())
     text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
     draw.text(
         (
-            LAYER_CHIP_X + (LAYER_CHIP_WIDTH - text_width) // 2,
-            LAYER_CHIP_Y + (LAYER_CHIP_HEIGHT - text_height) // 2 - 1,
+            LAYER_TEXT_X + (LAYER_TEXT_WIDTH - text_width) // 2,
+            LAYER_TEXT_Y,
         ),
         text,
         fill=FOREGROUND,
@@ -300,7 +298,7 @@ def draw_layer_chip(draw: ImageDraw.ImageDraw, label: str) -> None:
 
 def draw_profile_layer_canvas(profiles: tuple[ProfilePreview, ...], active_index: int, layer_label: str) -> Image.Image:
     image = draw_profile_grid_canvas(profiles=profiles, active_index=active_index)
-    draw_layer_chip(ImageDraw.Draw(image), label=layer_label)
+    draw_layer_info(ImageDraw.Draw(image), label=layer_label)
     return image
 
 

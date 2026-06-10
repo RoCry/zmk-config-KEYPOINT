@@ -8,6 +8,7 @@ BINDING_CHECKER = ROOT / "scripts/check_keypoint_bindings.py"
 LIVE_DATA_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data.h"
 LIVE_DATA_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data.c"
 STATUS_C = ROOT / "config/boards/shields/lpm_view/widgets/status.c"
+STATUS_INFO_PANEL_H = ROOT / "config/boards/shields/lpm_view/widgets/status_info_panel.h"
 STATUS_LAYOUT_H = ROOT / "config/boards/shields/lpm_view/widgets/status_layout.h"
 UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
 CMAKE = ROOT / "config/boards/shields/lpm_view/CMakeLists.txt"
@@ -104,21 +105,24 @@ def test_status_tracks_each_ble_profile_state() -> None:
     assert "!zmk_ble_profile_is_open(i)" in text
 
 
-def test_status_uses_compact_profile_grid_and_layer_chip() -> None:
-    text = STATUS_C.read_text()
+def test_status_uses_compact_profile_grid_and_layer_info() -> None:
+    status = STATUS_C.read_text()
+    info_panel = STATUS_INFO_PANEL_H.read_text()
+    text = status + info_panel
 
-    middle_start = text.index("static void draw_middle(")
-    middle_end = text.index("static void draw_bottom(", middle_start)
-    middle = text[middle_start:middle_end]
-    bottom_start = text.index("static void draw_bottom(")
-    bottom_end = text.index("static void set_battery_status(", bottom_start)
-    bottom = text[bottom_start:bottom_end]
+    middle_start = status.index("static void draw_middle(")
+    middle_end = status.index("static void draw_bottom(", middle_start)
+    middle = status[middle_start:middle_end]
+    bottom_start = status.index("static void draw_bottom(")
+    bottom_end = status.index("static void set_battery_status(", bottom_start)
+    bottom = status[bottom_start:bottom_end]
 
     assert "draw_profile_grid(" in middle
     assert "draw_profile_slot(" in text
     assert "lv_canvas_draw_arc(" not in middle
-    assert "draw_layer_chip(" in middle
-    assert "draw_layer_chip(" in bottom
+    assert "draw_layer_info(" in middle
+    assert "draw_layer_info(" in bottom
+    assert "draw_layer_chip(" not in text
     assert 'return "BASE";' in text
 
 
@@ -146,7 +150,7 @@ def test_live_data_panel_uses_bottom_divider_without_frame() -> None:
 
 
 def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> None:
-    text = STATUS_C.read_text()
+    text = STATUS_C.read_text() + STATUS_INFO_PANEL_H.read_text()
     layout = STATUS_LAYOUT_H.read_text()
 
     for name in (
@@ -157,6 +161,8 @@ def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> 
         "KEYPOINT_PROFILE_SLOT_WIDTH",
         "KEYPOINT_PROFILE_SLOT_HEIGHT",
         "KEYPOINT_PROFILE_MARK_SIZE",
+        "KEYPOINT_PROFILE_ROW_Y",
+        "KEYPOINT_LAYER_TEXT_Y",
     ):
         assert name in text
         assert name in layout
@@ -169,9 +175,26 @@ def test_profile_layout_leaves_room_for_layer_chip() -> None:
     layout = STATUS_LAYOUT_H.read_text()
 
     assert "#define KEYPOINT_PROFILE_SLOT_WIDTH 15" in layout
-    assert "#define KEYPOINT_PROFILE_SLOT_HEIGHT 16" in layout
+    assert "#define KEYPOINT_PROFILE_SLOT_HEIGHT 14" in layout
     assert "#define KEYPOINT_PROFILE_MARK_SIZE 3" in layout
-    assert "#define KEYPOINT_LAYER_CHIP_Y 28" in layout
+    assert "#define KEYPOINT_PROFILE_ROW_Y 43" in layout
+    assert "#define KEYPOINT_LAYER_TEXT_Y 61" in layout
+    assert "KEYPOINT_LAYER_CHIP" not in layout
+
+
+def test_layer_info_uses_small_unframed_trimmed_text() -> None:
+    status = STATUS_C.read_text()
+    info_panel = STATUS_INFO_PANEL_H.read_text()
+    text = status + info_panel
+
+    layer_start = info_panel.index("static void draw_layer_info(")
+    layer = info_panel[layer_start:]
+
+    assert "draw_rect_outline(" not in layer
+    assert "KEYPOINT_LAYER_TEXT_Y" in layer
+    assert "trim_layer_label(" in text
+    assert "lv_font_unscii_8" in text
+    assert "layer_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8" in text
 
 
 def test_live_data_panel_draws_health_strip() -> None:

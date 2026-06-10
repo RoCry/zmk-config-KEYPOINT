@@ -26,6 +26,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include "live_data.h"
 #include "status_layout.h"
+#include "status_info_panel.h"
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
@@ -204,99 +205,6 @@ void keypoint_live_data_refresh_displays(void) {
     }
 }
 
-static void draw_rect_outline(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t width,
-                              lv_coord_t height, const lv_draw_rect_dsc_t *rect_dsc) {
-    lv_canvas_draw_rect(canvas, x, y, width, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, y + height - 1, width, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, y, 1, height, rect_dsc);
-    lv_canvas_draw_rect(canvas, x + width - 1, y, 1, height, rect_dsc);
-}
-
-static void draw_plus_marker(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t size,
-                             const lv_draw_rect_dsc_t *rect_dsc) {
-    const lv_coord_t center = size / 2;
-    lv_canvas_draw_rect(canvas, x + center, y, 1, size, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, y + center, size, 1, rect_dsc);
-}
-
-static void draw_profile_open_slot(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
-                                   const lv_draw_rect_dsc_t *rect_dsc) {
-    const lv_coord_t right = x + KEYPOINT_PROFILE_SLOT_WIDTH - 1;
-    const lv_coord_t bottom = y + KEYPOINT_PROFILE_SLOT_HEIGHT - 1;
-    const lv_coord_t corner = KEYPOINT_PROFILE_CORNER_SIZE;
-
-    lv_canvas_draw_rect(canvas, x, y, corner, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, y, 1, corner, rect_dsc);
-    lv_canvas_draw_rect(canvas, right - corner + 1, y, corner, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, right, y, 1, corner, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, bottom, corner, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, x, bottom - corner + 1, 1, corner, rect_dsc);
-    lv_canvas_draw_rect(canvas, right - corner + 1, bottom, corner, 1, rect_dsc);
-    lv_canvas_draw_rect(canvas, right, bottom - corner + 1, 1, corner, rect_dsc);
-}
-
-static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state, uint8_t index,
-                              lv_coord_t x, lv_coord_t y,
-                              const lv_draw_rect_dsc_t *foreground_rect_dsc,
-                              const lv_draw_rect_dsc_t *background_rect_dsc,
-                              const lv_draw_label_dsc_t *foreground_label_dsc,
-                              const lv_draw_label_dsc_t *background_label_dsc) {
-    const bool active = index == state->active_profile_index;
-    const bool connected = state->profile_connected[index];
-    const bool bonded = state->profile_bonded[index];
-    const lv_draw_rect_dsc_t *status_rect_dsc = active ? background_rect_dsc : foreground_rect_dsc;
-    char label[2];
-
-    if (active) {
-        lv_canvas_draw_rect(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
-                            KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
-    } else if (bonded) {
-        draw_rect_outline(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
-                          KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
-    } else {
-        draw_profile_open_slot(canvas, x, y, foreground_rect_dsc);
-    }
-
-    snprintk(label, sizeof(label), "%u", index + 1);
-    lv_canvas_draw_text(canvas, x + 1, y + 1, 9, active ? background_label_dsc : foreground_label_dsc,
-                        label);
-
-    const lv_coord_t mark_x = x + KEYPOINT_PROFILE_MARK_X_OFFSET;
-    const lv_coord_t mark_y = y + KEYPOINT_PROFILE_MARK_Y_OFFSET;
-    if (connected) {
-        lv_canvas_draw_rect(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE,
-                            KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
-    } else if (bonded) {
-        draw_rect_outline(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE,
-                          KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
-    } else {
-        draw_plus_marker(canvas, mark_x, mark_y, KEYPOINT_PROFILE_MARK_SIZE, status_rect_dsc);
-    }
-}
-
-static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state,
-                              const lv_draw_rect_dsc_t *foreground_rect_dsc,
-                              const lv_draw_rect_dsc_t *background_rect_dsc,
-                              const lv_draw_label_dsc_t *foreground_label_dsc,
-                              const lv_draw_label_dsc_t *background_label_dsc) {
-    static const lv_coord_t slot_offsets[KEYPOINT_STATUS_PROFILE_COUNT][2] = {
-        {2, 3},
-        {20, 3},
-        {38, 3},
-        {56, 3},
-    };
-
-    for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
-        draw_profile_slot(canvas, state, i, slot_offsets[i][0], slot_offsets[i][1],
-                          foreground_rect_dsc, background_rect_dsc, foreground_label_dsc,
-                          background_label_dsc);
-    }
-}
-
-static void draw_layer_chip(lv_obj_t *canvas, const struct status_state *state,
-                            const lv_draw_rect_dsc_t *rect_dsc,
-                            const lv_draw_label_dsc_t *label_dsc);
-
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
     lv_obj_t *canvas = lv_obj_get_child(widget, 1);
 
@@ -310,42 +218,15 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_label_dsc(&profile_label_dsc_black, LVGL_BACKGROUND, &lv_font_unscii_8,
                    LV_TEXT_ALIGN_LEFT);
     lv_draw_label_dsc_t layer_label_dsc;
-    init_label_dsc(&layer_label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14,
-                   LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&layer_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_CENTER);
 
     // Fill background.
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
     draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &profile_label_dsc,
                       &profile_label_dsc_black);
-    draw_layer_chip(canvas, state, &rect_white_dsc, &layer_label_dsc);
+    draw_layer_info(canvas, state, &layer_label_dsc);
 
     rotate_canvas(canvas, cbuf);
-}
-
-static const char *layer_chip_text(const struct status_state *state, char *fallback,
-                                   size_t fallback_size) {
-    if (state->layer_index == 0) {
-        return "BASE";
-    }
-
-    if (state->layer_label != NULL) {
-        return state->layer_label;
-    }
-
-    snprintk(fallback, fallback_size, "LAYER %u", state->layer_index);
-    return fallback;
-}
-
-static void draw_layer_chip(lv_obj_t *canvas, const struct status_state *state,
-                            const lv_draw_rect_dsc_t *rect_dsc,
-                            const lv_draw_label_dsc_t *label_dsc) {
-    char fallback[10] = {};
-    const char *label = layer_chip_text(state, fallback, sizeof(fallback));
-
-    draw_rect_outline(canvas, KEYPOINT_LAYER_CHIP_X, KEYPOINT_LAYER_CHIP_Y,
-                      KEYPOINT_LAYER_CHIP_WIDTH, KEYPOINT_LAYER_CHIP_HEIGHT, rect_dsc);
-    lv_canvas_draw_text(canvas, KEYPOINT_LAYER_CHIP_X + 2, KEYPOINT_LAYER_CHIP_Y + 4,
-                        KEYPOINT_LAYER_CHIP_WIDTH - 4, label_dsc, label);
 }
 
 static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -353,15 +234,13 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
 
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-    lv_draw_rect_dsc_t rect_white_dsc;
-    init_rect_dsc(&rect_white_dsc, LVGL_FOREGROUND);
     lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_CENTER);
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
 
-    draw_layer_chip(canvas, state, &rect_white_dsc, &label_dsc);
+    draw_layer_info(canvas, state, &label_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);

@@ -71,7 +71,9 @@ def test_profile_layer_preview_keeps_profiles_small_and_layer_visible() -> None:
     assert preview.PROFILE_SLOT_WIDTH <= 18
     assert preview.PROFILE_SLOT_HEIGHT <= 18
     assert preview.PROFILE_MARK_SIZE <= 4
-    assert preview.PROFILE_SLOT_Y[0] + preview.PROFILE_SLOT_HEIGHT < preview.LAYER_CHIP_Y
+    assert preview.PROFILE_SLOT_Y[0] >= 40
+    assert preview.PROFILE_SLOT_Y[0] + preview.PROFILE_SLOT_HEIGHT < preview.LAYER_TEXT_Y
+    assert preview.LAYER_TEXT_Y >= 60
 
     image = preview.draw_profile_layer_canvas(
         (
@@ -89,4 +91,6 @@ def test_profile_layer_preview_keeps_profiles_small_and_layer_visible() -> None:
     assert image.getpixel((preview.PROFILE_SLOT_X[1] + 1, preview.PROFILE_SLOT_Y[1] + 1)) == preview.BACKGROUND
     assert image.getpixel((preview.PROFILE_SLOT_X[1], preview.PROFILE_SLOT_Y[1])) == preview.FOREGROUND
     assert image.getpixel((preview.PROFILE_SLOT_X[2] + 11, preview.PROFILE_SLOT_Y[2] + 11)) == preview.FOREGROUND
-    assert image.getpixel((preview.LAYER_CHIP_X, preview.LAYER_CHIP_Y)) == preview.FOREGROUND
+    assert image.getpixel((preview.LAYER_TEXT_X, preview.LAYER_TEXT_Y - 1)) == preview.BACKGROUND
+    layer_crop = image.crop((0, preview.LAYER_TEXT_Y, preview.CANVAS_SIZE, preview.CANVAS_SIZE))
+    assert min(layer_crop.tobytes()) < preview.BACKGROUND
