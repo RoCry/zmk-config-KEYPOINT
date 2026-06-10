@@ -117,17 +117,13 @@ def test_status_uses_compact_profile_grid_and_layer_info() -> None:
     text = status + info_panel
 
     middle_start = status.index("static void draw_middle(")
-    middle_end = status.index("static void draw_bottom(", middle_start)
+    middle_end = status.index("static void set_battery_status(", middle_start)
     middle = status[middle_start:middle_end]
-    bottom_start = status.index("static void draw_bottom(")
-    bottom_end = status.index("static void set_battery_status(", bottom_start)
-    bottom = status[bottom_start:bottom_end]
 
     assert "draw_profile_grid(" in middle
     assert "draw_profile_slot(" in text
     assert "lv_canvas_draw_arc(" not in middle
     assert "draw_layer_info(" in middle
-    assert "draw_layer_info(" in bottom
     assert "draw_layer_chip(" not in text
     assert 'return "BASE";' in text
 
@@ -140,7 +136,15 @@ def test_layer_status_refreshes_visible_profile_layer_canvas() -> None:
     setter = text[setter_start:setter_end]
 
     assert "draw_middle(widget->obj, widget->cbuf2, &widget->state);" in setter
-    assert "draw_bottom(widget->obj, widget->cbuf3, &widget->state);" in setter
+    assert "draw_bottom(" not in setter
+
+
+def test_status_does_not_overpaint_layer_info_with_third_canvas() -> None:
+    text = STATUS_C.read_text()
+
+    assert "static void draw_bottom(" not in text
+    assert "lv_obj_get_child(widget, 2)" not in text
+    assert "lv_canvas_set_buffer(bottom" not in text
 
 
 def test_live_data_panel_uses_bottom_divider_without_frame() -> None:

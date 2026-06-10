@@ -229,23 +229,6 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     rotate_canvas(canvas, cbuf);
 }
 
-static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
-    lv_obj_t *canvas = lv_obj_get_child(widget, 2);
-
-    lv_draw_rect_dsc_t rect_black_dsc;
-    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-    lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_CENTER);
-
-    // Fill background
-    lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
-
-    draw_layer_info(canvas, state, &label_dsc);
-
-    // Rotate canvas
-    rotate_canvas(canvas, cbuf);
-}
-
 static void set_battery_status(struct zmk_widget_status *widget,
                                struct battery_status_state state) {
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
@@ -333,7 +316,6 @@ static void set_layer_status(struct zmk_widget_status *widget, struct layer_stat
     widget->state.layer_label = state.label;
 
     draw_middle(widget->obj, widget->cbuf2, &widget->state);
-    draw_bottom(widget->obj, widget->cbuf3, &widget->state);
 }
 
 static void layer_status_update_cb(struct layer_status_state state) {
@@ -363,11 +345,6 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_t *middle = lv_canvas_create(widget->obj);
     lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 68, 0);
     lv_canvas_set_buffer(middle, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
-    // bottom layer status
-    lv_obj_t *bottom = lv_canvas_create(widget->obj);
-    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, 128, 0);
-    lv_canvas_set_buffer(bottom, widget->cbuf3, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
-
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
     widget_output_status_init();

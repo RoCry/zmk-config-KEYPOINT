@@ -65,6 +65,16 @@ def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
     assert empty.getpixel((35, preview.LIVE_HEALTH_Y)) == preview.FOREGROUND
 
 
+def test_live_data_preview_uses_expanded_vertical_area() -> None:
+    preview = load_module()
+
+    assert preview.LIVE_TEXT_Y <= 18
+    assert preview.LIVE_TEXT_LINE_HEIGHT >= 12
+    assert preview.LIVE_ICON_Y >= 56
+    assert preview.LIVE_DIVIDER_Y >= 67
+    assert preview.LIVE_HEALTH_Y >= 70
+
+
 def test_profile_layer_preview_keeps_profiles_small_and_layer_visible() -> None:
     preview = load_module()
 
