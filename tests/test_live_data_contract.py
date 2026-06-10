@@ -328,11 +328,14 @@ def test_demo_sender_exercises_diverse_icon_data() -> None:
     text = SENDER.read_text()
 
     for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
-        assert f'DemoSource(icon="{icon}"' in text
+        assert f'icon="{icon}"' in text
 
     assert text.count("DemoSource(") >= 16
     assert '"MAX8CHAR"' in text
     assert '"ABCDEFGH"' in text
+    # Demo lines exploit the monospace grid: padded label/value columns.
+    assert "def kv(" in text
+    assert "def title(" in text
 
 
 def test_demo_sender_randomizes_dynamic_mock_data_by_default() -> None:

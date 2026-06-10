@@ -43,9 +43,27 @@ ICON_IDS = frozenset(
 )
 
 
+def kv(label: str, value: str) -> str:
+    """Pad LABEL + value to a full LINE_MAX-wide line.
+
+    The display font is monospace, so full-width lines turn the screen into an
+    8x6 character grid: labels form a left column, values a right column."""
+    if len(label) + len(value) >= LINE_MAX:
+        raise ValueError(f"kv({label!r}, {value!r}) does not fit {LINE_MAX} chars with a gap")
+    return f"{label}{' ' * (LINE_MAX - len(label) - len(value))}{value}"
+
+
+def title(text: str) -> str:
+    """Left-anchor a card title by padding it to the full line width."""
+    if len(text) > LINE_MAX:
+        raise ValueError(f"title {text!r} longer than {LINE_MAX} chars")
+    return text.ljust(LINE_MAX)
+
+
 @dataclass(frozen=True, slots=True)
 class DemoSource:
-    """Lines 1-2 + data_time fill the top canvas; extra1-3 fill the middle canvas."""
+    """One dashboard card: line1 title + line2 key metric + data_time on the
+    top canvas, extra1-3 detail rows on the middle canvas."""
 
     icon: str
     line1: str
@@ -56,27 +74,136 @@ class DemoSource:
 
 
 DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
+    # Grid test card: every line at max width.
     DemoSource(
         icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH", extra1="12345678", extra2="IJKLMNOP", extra3="87654321"
     ),
-    DemoSource(icon="SUN", line1="SUNNY", line2="TMP 24C", extra1="UV 5", extra2="HUM 40%", extra3="AQI 42"),
-    DemoSource(icon="SUN", line1="UV HI", line2="AQI 42", extra1="TMP 31C"),
-    DemoSource(icon="CLOUD", line1="CLOUDY", line2="HUM 62%", extra1="PM2 035", extra2="VIS 8KM"),
-    DemoSource(icon="CLOUD", line1="PM2 035", line2="VIS 8KM"),
-    DemoSource(icon="RAIN", line1="RAIN", line2="WIND 3M", extra1="RAIN 2MM", extra2="HUM 88%"),
-    DemoSource(icon="RAIN", line1="RAIN 8MM", line2="WIND 12", extra1="GUST 19M", extra2="HUM 93%", extra3="VIS 2KM"),
-    DemoSource(icon="TEMP", line1="TEMP", line2="24C"),
-    DemoSource(icon="TEMP", line1="OUT 19C", line2="IN  25C", extra1="FEELS17C"),
-    DemoSource(icon="WARN", line1="WARN", line2="AQI 142", extra1="PM2 089", extra2="MASK ON"),
-    DemoSource(icon="WARN", line1="LOW BATT", line2="CHG SOON"),
-    DemoSource(icon="CODE", line1="BUILD OK", line2="READY", extra1="MAIN", extra2="3M 12S"),
-    DemoSource(icon="CODE", line1="CI PASS", line2="22 TESTS", extra1="COV 87%"),
-    DemoSource(icon="TIME", line1="TIME", line2="LOCAL"),
-    DemoSource(icon="TIME", line1="TZ  UTC8", line2="SYNC OK", extra1="NTP OK"),
-    DemoSource(icon="CODEX", line1="CODEX", line2="5h 58%", extra1="7D 45%", extra2="RST 3H"),
-    DemoSource(icon="CODEX", line1="7D 45%", line2="3D 12H"),
-    DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE", extra1="5H 22%", extra2="WK 41%", extra3="OPUS 4.8"),
-    DemoSource(icon="CLAUDE", line1="TOK 81%", line2="CTX OK"),
+    DemoSource(
+        icon="SUN",
+        line1=title("SUNNY"),
+        line2=kv("TMP", "24C"),
+        extra1=kv("UV", "5"),
+        extra2=kv("HUM", "40%"),
+        extra3=kv("AQI", "42"),
+    ),
+    DemoSource(
+        icon="SUN",
+        line1=title("CLEAR"),
+        line2=kv("TMP", "31C"),
+        extra1=kv("UV", "8"),
+        extra2=kv("WIND", "2M"),
+        extra3=kv("AQI", "65"),
+    ),
+    DemoSource(
+        icon="CLOUD",
+        line1=title("CLOUDY"),
+        line2=kv("TMP", "18C"),
+        extra1=kv("HUM", "62%"),
+        extra2=kv("PM2", "35"),
+        extra3=kv("VIS", "8KM"),
+    ),
+    DemoSource(
+        icon="CLOUD",
+        line1=title("OVERCAST"),
+        line2=kv("TMP", "15C"),
+        extra1=kv("HUM", "71%"),
+        extra2=kv("PM2", "52"),
+        extra3=kv("VIS", "5KM"),
+    ),
+    DemoSource(
+        icon="RAIN",
+        line1=title("RAIN"),
+        line2=kv("TMP", "16C"),
+        extra1=kv("RAIN", "3MM"),
+        extra2=kv("WIND", "6M"),
+        extra3=kv("HUM", "88%"),
+    ),
+    DemoSource(
+        icon="RAIN",
+        line1=title("STORM"),
+        line2=kv("TMP", "14C"),
+        extra1=kv("RAIN", "9MM"),
+        extra2=kv("GUST", "19M"),
+        extra3=kv("VIS", "2KM"),
+    ),
+    DemoSource(
+        icon="TEMP",
+        line1=title("INDOOR"),
+        line2=kv("IN", "25C"),
+        extra1=kv("OUT", "19C"),
+        extra2=kv("HUM", "55%"),
+        extra3=kv("CO2", "640"),
+    ),
+    DemoSource(
+        icon="TEMP",
+        line1=title("OUTDOOR"),
+        line2=kv("OUT", "-3C"),
+        extra1=kv("FEEL", "-8C"),
+        extra2=kv("WIND", "9M"),
+        extra3=kv("HUM", "30%"),
+    ),
+    DemoSource(
+        icon="WARN",
+        line1=title("AQI WARN"),
+        line2=kv("AQI", "142"),
+        extra1=kv("PM2", "89"),
+        extra2=kv("PM10", "160"),
+        extra3=kv("LVL", "BAD"),
+    ),
+    DemoSource(
+        icon="WARN", line1=title("LOW BATT"), line2=kv("BAT", "9%"), extra1=kv("EST", "2H"), extra2=kv("CHG", "SOON")
+    ),
+    DemoSource(
+        icon="CODE",
+        line1=title("CI PASS"),
+        line2=kv("MAIN", "OK"),
+        extra1=kv("TESTS", "56"),
+        extra2=kv("COV", "87%"),
+        extra3=kv("TIME", "3M"),
+    ),
+    DemoSource(
+        icon="CODE",
+        line1=title("CI FAIL"),
+        line2=kv("PR", "#142"),
+        extra1=kv("FAIL", "2"),
+        extra2=kv("AT", "LINT"),
+        extra3=kv("DUR", "45S"),
+    ),
+    DemoSource(
+        icon="TIME", line1=title("TZ UTC+8"), line2=kv("NTP", "OK"), extra1=kv("UP", "14D"), extra2=kv("DRIFT", "2S")
+    ),
+    DemoSource(
+        icon="CODEX",
+        line1=title("CODEX"),
+        line2=kv("5H", "58%"),
+        extra1=kv("7D", "45%"),
+        extra2=kv("RST", "3H"),
+        extra3=kv("CTX", "12%"),
+    ),
+    DemoSource(
+        icon="CODEX",
+        line1=title("CODEX"),
+        line2=kv("5H", "91%"),
+        extra1=kv("7D", "72%"),
+        extra2=kv("RST", "36M"),
+        extra3=kv("CTX", "40%"),
+    ),
+    DemoSource(
+        icon="CLAUDE",
+        line1=title("CLAUDE"),
+        line2=kv("5H", "22%"),
+        extra1=kv("WK", "41%"),
+        extra2=kv("CTX", "64%"),
+        extra3=kv("TOK", "81K"),
+    ),
+    DemoSource(
+        icon="CLAUDE",
+        line1=title("CLAUDE"),
+        line2=kv("5H", "76%"),
+        extra1=kv("WK", "88%"),
+        extra2=kv("RST", "90M"),
+        extra3=kv("CTX", "18%"),
+    ),
 )
 
 app = typer.Typer(help="Send mock live-data frames to the KEYPOINT left display over BLE.")
@@ -87,75 +214,123 @@ DemoGenerator: TypeAlias = Callable[[random.Random], DemoSource]
 
 def random_none_source(rng: random.Random) -> DemoSource:
     _ = rng
-    return DemoSource(icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH")
+    return DemoSource(
+        icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH", extra1="12345678", extra2="IJKLMNOP", extra3="87654321"
+    )
 
 
 def random_sun_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="SUN",
-        line1=rng.choice(("SUNNY", "UV HI")),
-        line2=f"TMP {rng.randint(18, 35):02d}C",
-        extra1=f"UV {rng.randint(1, 9)}",
-        extra2=f"HUM {rng.randint(20, 60):02d}%",
-        extra3=f"AQI {rng.randint(10, 99):02d}",
+        line1=title(rng.choice(("SUNNY", "CLEAR"))),
+        line2=kv("TMP", f"{rng.randint(18, 35)}C"),
+        extra1=kv("UV", str(rng.randint(1, 9))),
+        extra2=kv("HUM", f"{rng.randint(20, 60)}%"),
+        extra3=kv("AQI", str(rng.randint(10, 99))),
     )
 
 
 def random_cloud_source(rng: random.Random) -> DemoSource:
-    return DemoSource(icon="CLOUD", line1=rng.choice(("CLOUDY", "PM2 035")), line2=f"HUM {rng.randint(35, 85):02d}%")
+    return DemoSource(
+        icon="CLOUD",
+        line1=title(rng.choice(("CLOUDY", "OVERCAST"))),
+        line2=kv("TMP", f"{rng.randint(8, 22)}C"),
+        extra1=kv("HUM", f"{rng.randint(35, 85)}%"),
+        extra2=kv("PM2", str(rng.randint(10, 80))),
+        extra3=kv("VIS", f"{rng.randint(2, 9)}KM"),
+    )
 
 
 def random_rain_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="RAIN",
-        line1=f"RN {rng.randint(1, 18):02d}MM",
-        line2=f"WND {rng.randint(1, 18):02d}M",
-        extra1=f"HUM {rng.randint(70, 99):02d}%",
-        extra2=f"VIS {rng.randint(1, 9)}KM",
+        line1=title(rng.choice(("RAIN", "STORM"))),
+        line2=kv("TMP", f"{rng.randint(8, 20)}C"),
+        extra1=kv("RAIN", f"{rng.randint(1, 9)}MM"),
+        extra2=kv("WIND", f"{rng.randint(1, 19)}M"),
+        extra3=kv("HUM", f"{rng.randint(70, 99)}%"),
     )
 
 
 def random_temp_source(rng: random.Random) -> DemoSource:
-    return DemoSource(icon="TEMP", line1="TEMP", line2=f"OUT {rng.randint(10, 35):02d}C")
+    return DemoSource(
+        icon="TEMP",
+        line1=title("INDOOR"),
+        line2=kv("IN", f"{rng.randint(18, 28)}C"),
+        extra1=kv("OUT", f"{rng.randint(-9, 35)}C"),
+        extra2=kv("HUM", f"{rng.randint(30, 70)}%"),
+        extra3=kv("CO2", str(rng.randint(400, 999))),
+    )
 
 
 def random_warn_source(rng: random.Random) -> DemoSource:
     if rng.choice((True, False)):
-        return DemoSource(icon="WARN", line1="AQI WARN", line2=f"AQI {rng.randint(101, 199):03d}")
-    return DemoSource(icon="WARN", line1="LOW BATT", line2=f"BAT {rng.randint(5, 19):02d}%")
+        return DemoSource(
+            icon="WARN",
+            line1=title("AQI WARN"),
+            line2=kv("AQI", str(rng.randint(101, 199))),
+            extra1=kv("PM2", str(rng.randint(60, 99))),
+            extra2=kv("PM10", str(rng.randint(100, 199))),
+            extra3=kv("LVL", "BAD"),
+        )
+    return DemoSource(
+        icon="WARN",
+        line1=title("LOW BATT"),
+        line2=kv("BAT", f"{rng.randint(5, 19)}%"),
+        extra1=kv("EST", f"{rng.randint(1, 9)}H"),
+        extra2=kv("CHG", "SOON"),
+    )
 
 
 def random_code_source(rng: random.Random) -> DemoSource:
     if rng.choice((True, False)):
-        return DemoSource(icon="CODE", line1="BUILD OK", line2="READY")
-    return DemoSource(icon="CODE", line1="CI PASS", line2=f"{rng.randint(10, 99)} TEST")
+        return DemoSource(
+            icon="CODE",
+            line1=title("CI PASS"),
+            line2=kv("MAIN", "OK"),
+            extra1=kv("TESTS", str(rng.randint(10, 99))),
+            extra2=kv("COV", f"{rng.randint(60, 99)}%"),
+            extra3=kv("TIME", f"{rng.randint(1, 9)}M"),
+        )
+    return DemoSource(
+        icon="CODE",
+        line1=title("CI FAIL"),
+        line2=kv("PR", f"#{rng.randint(100, 999)}"),
+        extra1=kv("FAIL", str(rng.randint(1, 9))),
+        extra2=kv("AT", rng.choice(("LINT", "TEST", "BUILD"))),
+        extra3=kv("DUR", f"{rng.randint(10, 99)}S"),
+    )
 
 
 def random_time_source(rng: random.Random) -> DemoSource:
-    return DemoSource(icon="TIME", line1="LOCAL", line2=rng.choice(("SYNC OK", "TZ UTC8")))
+    return DemoSource(
+        icon="TIME",
+        line1=title("TZ UTC+8"),
+        line2=kv("NTP", "OK"),
+        extra1=kv("UP", f"{rng.randint(1, 99)}D"),
+        extra2=kv("DRIFT", f"{rng.randint(0, 9)}S"),
+    )
 
 
 def random_codex_source(rng: random.Random) -> DemoSource:
-    if rng.choice((True, False)):
-        return DemoSource(icon="CODEX", line1="CODEX", line2=f"{rng.randint(1, 9)}h {rng.randint(10, 99)}%")
     return DemoSource(
         icon="CODEX",
-        line1=f"{rng.randint(1, 7)}D {rng.randint(10, 99)}%",
-        line2=f"CTX {rng.randint(10, 99)}%",
-        extra1=f"5H {rng.randint(10, 99)}%",
-        extra2=f"RST {rng.randint(1, 9)}H",
+        line1=title("CODEX"),
+        line2=kv("5H", f"{rng.randint(10, 99)}%"),
+        extra1=kv("7D", f"{rng.randint(10, 99)}%"),
+        extra2=kv("RST", f"{rng.randint(1, 9)}H"),
+        extra3=kv("CTX", f"{rng.randint(10, 99)}%"),
     )
 
 
 def random_claude_source(rng: random.Random) -> DemoSource:
-    if rng.choice((True, False)):
-        return DemoSource(icon="CLAUDE", line1="CLAUDE", line2="CODE")
     return DemoSource(
         icon="CLAUDE",
-        line1=f"TOK {rng.randint(10, 99)}%",
-        line2=f"CTX {rng.randint(10, 99)}%",
-        extra1=f"5H {rng.randint(10, 99)}%",
-        extra2=f"WK {rng.randint(10, 99)}%",
+        line1=title("CLAUDE"),
+        line2=kv("5H", f"{rng.randint(10, 99)}%"),
+        extra1=kv("WK", f"{rng.randint(10, 99)}%"),
+        extra2=kv("CTX", f"{rng.randint(10, 99)}%"),
+        extra3=kv("TOK", f"{rng.randint(10, 99)}K"),
     )
 
 

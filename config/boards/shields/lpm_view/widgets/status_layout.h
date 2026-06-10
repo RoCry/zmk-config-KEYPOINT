@@ -7,10 +7,12 @@
 
 #pragma once
 
+/* The live-data icon sits in the top status row, between the battery
+ * (ends x=32) and the endpoint symbol (starts x>=52). */
 #define KEYPOINT_LIVE_ICON_SIZE 8
 #define KEYPOINT_LIVE_ICON_SCALE 1
-#define KEYPOINT_LIVE_ICON_X 2
-#define KEYPOINT_LIVE_ICON_Y 56
+#define KEYPOINT_LIVE_ICON_X 38
+#define KEYPOINT_LIVE_ICON_Y 4
 #define KEYPOINT_LIVE_TEXT_X 3
 #define KEYPOINT_LIVE_TEXT_Y 18
 #define KEYPOINT_LIVE_TEXT_WIDTH 67

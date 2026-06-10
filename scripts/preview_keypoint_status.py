@@ -465,35 +465,74 @@ class PreviewCase:
 _PROFILES_CONNECTED = (True, False, False, False)
 _PROFILES_BONDED = (True, True, False, False)
 
+
+def _kv(label: str, value: str) -> str:
+    """Pad LABEL + value to a full LINE_MAX-wide line (monospace font ->
+    labels form a left column, values a right column). Mirrors the kv()
+    helper in send_keypoint_live_demo.py."""
+    if len(label) + len(value) >= LIVE_LINE_MAX:
+        raise ValueError(f"kv({label!r}, {value!r}) does not fit {LIVE_LINE_MAX} chars with a gap")
+    return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
+
+
+def _card(icon: str, *lines: str) -> str:
+    """Build a KP2 frame; missing lines are sent empty."""
+    if len(lines) > LIVE_LINE_COUNT:
+        raise ValueError(f"at most {LIVE_LINE_COUNT} lines, got {len(lines)}")
+    padded = lines + ("",) * (LIVE_LINE_COUNT - len(lines))
+    return f"{LIVE_PREFIX}{icon}|" + "|".join(padded)
+
+
 DEMO_CASES: tuple[PreviewCase, ...] = (
     PreviewCase(
         name="rt_sun_base",
         state=StatusState(85, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame="KP2|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",
+        frame=_card(
+            "SUN", "SUNNY".ljust(8), _kv("TMP", "24C"), "12:00", _kv("UV", "5"), _kv("HUM", "40%"), _kv("AQI", "42")
+        ),
     ),
     PreviewCase(
         name="rt_claude_usb_charging",
         state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
-        frame="KP2|CLAUDE|CLAUDE|TOK 81%|14:32|5H 22%|WK 41%|OPUS 4.8",
+        frame=_card(
+            "CLAUDE",
+            "CLAUDE".ljust(8),
+            _kv("5H", "22%"),
+            "14:32",
+            _kv("WK", "41%"),
+            _kv("CTX", "64%"),
+            _kv("TOK", "81K"),
+        ),
     ),
     PreviewCase(
         # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; stale data
         # stays readable, the segmented health strip flags the staleness.
         name="rt_codex_stale",
         state=StatusState(72, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame="KP2|CODEX|CODEX|7D 45%|09:30|5H 58%|RST 3H|",
+        frame=_card(
+            "CODEX", "CODEX".ljust(8), _kv("5H", "58%"), "09:30", _kv("7D", "45%"), _kv("RST", "3H"), _kv("CTX", "12%")
+        ),
         stale=True,
     ),
     PreviewCase(
-        name="rt_rain_max_width",
+        # Every line at the full 8-char width, layer label from L7 fallback.
+        name="rt_storm_max_width",
         state=StatusState(100, True, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 7),
-        frame="KP2|RAIN|RAIN 8MM|WIND 12M|18:05:33|GUST 19M|HUM 93%|VIS 2KM",
+        frame=_card(
+            "RAIN",
+            "STORM".ljust(8),
+            _kv("TMP", "14C"),
+            "18:05:33",
+            _kv("RAIN", "9MM"),
+            _kv("GUST", "19M"),
+            _kv("VIS", "2KM"),
+        ),
     ),
     PreviewCase(
         # Only 3 of 6 lines used -> the extra block stays empty.
         name="rt_temp_short",
         state=StatusState(64, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame="KP2|TEMP|OUT 19C|IN  25C|22:10|||",
+        frame=_card("TEMP", "INDOOR".ljust(8), _kv("IN", "25C"), "22:10"),
     ),
     PreviewCase(
         # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever
@@ -504,6 +543,8 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
 )
 
 STALE_PREVIEW_FILES = (
+    # Renamed cases.
+    "left_screen_rt_rain_max_width.png",
     # Pre-glass-simulation outputs.
     "screen_ok_base.png",
     "screen_stale_lower.png",
