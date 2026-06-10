@@ -20,6 +20,10 @@
 #define KEYPOINT_LIVE_TEXT_Y 26
 #define KEYPOINT_LIVE_TEXT_WIDTH 67
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
+/* Page indicator ("n/N") for a multi-card deck: right-aligned in the free band
+ * between the status row and the first live-data line. Shown only when the deck
+ * has >1 page. Reuses KEYPOINT_LIVE_TEXT_X / _WIDTH for right alignment. */
+#define KEYPOINT_LIVE_PAGE_Y 14
 
 /* Live-data lines 1..KEYPOINT_LIVE_TOP_LINE_COUNT render on the top canvas;
  * the remaining lines and the health strip render on the middle (profile)
