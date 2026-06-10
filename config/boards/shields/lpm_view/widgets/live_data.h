@@ -15,9 +15,11 @@
 #define KEYPOINT_LIVE_DATA_STALE_MS 360000
 #define KEYPOINT_LIVE_DATA_PAGE_MAX 8
 #define KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX 1 /* PAGE_MAX <= 9 -> single digit */
+#define KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX 1
 #define KEYPOINT_LIVE_DATA_FRAME_MAX                                                               \
     ((sizeof(KEYPOINT_LIVE_DATA_PREFIX) - 1) +                                                     \
      ((KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX + 1) * 2) +                                               \
+     (KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX + 1) +                                                 \
      KEYPOINT_LIVE_DATA_ICON_MAX +                                                                 \
      (KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * KEYPOINT_LIVE_DATA_LINE_MAX) +                          \
      KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT)
@@ -35,8 +37,17 @@ enum keypoint_live_data_icon {
     KEYPOINT_LIVE_DATA_ICON_CLAUDE,
 };
 
+enum keypoint_live_data_led_hint {
+    KEYPOINT_LIVE_DATA_LED_HINT_NONE,
+    KEYPOINT_LIVE_DATA_LED_HINT_ACTIVE,
+    KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION,
+    KEYPOINT_LIVE_DATA_LED_HINT_WARNING,
+    KEYPOINT_LIVE_DATA_LED_HINT_ERROR,
+};
+
 struct keypoint_live_data_snapshot {
     enum keypoint_live_data_icon icon;
+    enum keypoint_live_data_led_hint led_hint;
     char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
     bool has_data;
     bool stale;
@@ -46,6 +57,7 @@ struct keypoint_live_data_snapshot {
 
 int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, uint8_t *total,
                              enum keypoint_live_data_icon *icon,
+                             enum keypoint_live_data_led_hint *led_hint,
                              char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]);
 struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void);

@@ -29,7 +29,7 @@ parser the firmware uses for the BLE GATT write.
 
 Producers: the KP2 wire protocol and line-layout conventions are documented
 in send_keypoint_live_demo.py. To check a candidate frame visually, run
-  uv run scripts/preview_keypoint_status.py --frame 'KP2|SUN|...'
+  uv run scripts/preview_keypoint_status.py --frame 'KP2|0|1|SUN|0|...'
 which validates it like the firmware would and renders the resulting glass.
 """
 
@@ -117,10 +117,14 @@ ICONS = _parse_icon_bitmaps()
 
 
 def _parse_icon_names() -> tuple[str, ...]:
-    """Icon identifiers accepted by icon_from_field() in live_data.c."""
-    names = tuple(re.findall(r'strcmp\(field, "(\w+)"\)', _read_widget_source("live_data.c")))
+    """Icon identifiers accepted by enum keypoint_live_data_icon."""
+    source = _read_widget_source("live_data.h")
+    block_match = re.search(r"enum keypoint_live_data_icon\s*\{(.*?)\};", source, re.S)
+    if block_match is None:
+        raise ValueError("enum keypoint_live_data_icon not found")
+    names = tuple(dict.fromkeys(re.findall(r"KEYPOINT_LIVE_DATA_ICON_([A-Z]+)", block_match.group(1))))
     if "NONE" not in names:
-        raise ValueError("icon_from_field() parse failed")
+        raise ValueError("keypoint_live_data_icon parse failed")
     missing = [name for name in names if name != "NONE" and name not in ICONS]
     if missing:
         raise ValueError(f"icons accepted by live_data.c without bitmaps: {missing}")
@@ -130,21 +134,28 @@ def _parse_icon_names() -> tuple[str, ...]:
 ICON_NAMES = _parse_icon_names()
 
 
-def _parse_live_data_contract() -> tuple[str, int, int, int]:
+def _parse_live_data_contract() -> tuple[str, int, int, int, int]:
     source = _read_widget_source("live_data.h")
     prefix_match = re.search(r'#define KEYPOINT_LIVE_DATA_PREFIX "([^"]+)"', source)
     if prefix_match is None:
         raise ValueError("KEYPOINT_LIVE_DATA_PREFIX not found")
     values = {name: int(value) for name, value in re.findall(r"#define KEYPOINT_LIVE_DATA_(\w+) (\d+)", source)}
-    return prefix_match.group(1), values["ICON_MAX"], values["TEXT_LINE_COUNT"], values["LINE_MAX"]
+    return (
+        prefix_match.group(1),
+        values["ICON_MAX"],
+        values["LED_HINT_FIELD_MAX"],
+        values["TEXT_LINE_COUNT"],
+        values["LINE_MAX"],
+    )
 
 
-LIVE_PREFIX, LIVE_ICON_MAX, LIVE_LINE_COUNT, LIVE_LINE_MAX = _parse_live_data_contract()
-# Two extra single-digit fields (IDX, TOTAL) with their separators precede ICON.
+LIVE_PREFIX, LIVE_ICON_MAX, LIVE_LED_HINT_FIELD_MAX, LIVE_LINE_COUNT, LIVE_LINE_MAX = _parse_live_data_contract()
+# Two single-digit page fields precede ICON; one single-digit LED hint follows it.
 LIVE_PAGE_FIELD_MAX = 1  # MAX_PAGES = 8 -> idx 0..7, total 1..8 (one digit)
 LIVE_FRAME_MAX = (
     len(LIVE_PREFIX)
     + (LIVE_PAGE_FIELD_MAX + 1) * 2
+    + (LIVE_LED_HINT_FIELD_MAX + 1)
     + LIVE_ICON_MAX
     + (LIVE_LINE_COUNT * LIVE_LINE_MAX)
     + LIVE_LINE_COUNT
@@ -197,6 +208,7 @@ BOLT_IMAGE = _parse_bolt_image()
 @dataclass(frozen=True, slots=True)
 class LiveDataSnapshot:
     icon: str
+    led_hint: int
     lines: tuple[str, ...]
     has_data: bool
     stale: bool
@@ -204,10 +216,10 @@ class LiveDataSnapshot:
     total_pages: int = 1
 
 
-def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, tuple[str, ...]]:
+def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, int, tuple[str, ...]]:
     """Port of keypoint_live_data_parse(); raises ValueError where the firmware
     rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED. Frame grammar:
-    KP2|IDX|TOTAL|ICON|L1|..|L6."""
+    KP2|IDX|TOTAL|ICON|LED|L1|..|L6."""
     data = frame.encode() if isinstance(frame, str) else frame
     if len(data) > LIVE_FRAME_MAX:
         raise ValueError(f"frame longer than {LIVE_FRAME_MAX} bytes")
@@ -215,9 +227,9 @@ def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, tuple[str, ...]
     if not data.startswith(prefix):
         raise ValueError(f"frame must start with {LIVE_PREFIX!r}")
 
-    # Fields after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3..(2+LINE_COUNT)=lines.
+    # Fields after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3=LED, 4..(3+LINE_COUNT)=lines.
     fields = data[len(prefix) :].split(b"|")
-    expected = 3 + LIVE_LINE_COUNT
+    expected = 4 + LIVE_LINE_COUNT
     if len(fields) != expected:
         raise ValueError(f"expected {expected} fields, got {len(fields)}")
 
@@ -233,12 +245,17 @@ def parse_live_frame(frame: str | bytes) -> tuple[int, int, str, tuple[str, ...]
     if len(icon_field) > LIVE_ICON_MAX or icon_field not in ICON_NAMES:
         raise ValueError(f"unknown icon {icon_field!r}")
 
+    led_field = fields[3].decode("latin-1")
+    if len(led_field) != LIVE_LED_HINT_FIELD_MAX or led_field not in {"0", "1", "2", "3", "4"}:
+        raise ValueError(f"bad LED hint {led_field!r}")
+    led_hint = int(led_field)
+
     lines = []
-    for raw in fields[3:]:
+    for raw in fields[4:]:
         if len(raw) > LIVE_LINE_MAX or any(not (0x20 <= b <= 0x7E) for b in raw):
             raise ValueError(f"bad line field {raw!r}")
         lines.append(raw.decode("ascii"))
-    return idx, total, icon_field, tuple(lines)
+    return idx, total, icon_field, led_hint, tuple(lines)
 
 
 def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapshot:
@@ -246,9 +263,9 @@ def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapsh
     stale keeps the last payload (which 1-bit rendering then hides)."""
     if frame is None:
         lines = ("NO DATA", "WAITING") + ("",) * (LIVE_LINE_COUNT - 2)
-        return LiveDataSnapshot("WARN", lines, has_data=False, stale=False)
-    idx, total, icon, lines = parse_live_frame(frame)
-    return LiveDataSnapshot(icon, lines, has_data=True, stale=stale, view_index=idx, total_pages=total)
+        return LiveDataSnapshot("WARN", 0, lines, has_data=False, stale=False)
+    idx, total, icon, led_hint, lines = parse_live_frame(frame)
+    return LiveDataSnapshot(icon, led_hint, lines, has_data=True, stale=stale, view_index=idx, total_pages=total)
 
 
 # ---------------------------------------------------------------------------
@@ -499,12 +516,12 @@ def _kv(label: str, value: str) -> str:
     return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
 
 
-def _card(icon: str, *lines: str, idx: int = 0, total: int = 1) -> str:
+def _card(icon: str, *lines: str, idx: int = 0, total: int = 1, led_hint: int = 0) -> str:
     """Build a KP2 frame; missing lines are sent empty."""
     if len(lines) > LIVE_LINE_COUNT:
         raise ValueError(f"at most {LIVE_LINE_COUNT} lines, got {len(lines)}")
     padded = lines + ("",) * (LIVE_LINE_COUNT - len(lines))
-    return f"{LIVE_PREFIX}{idx}|{total}|{icon}|" + "|".join(padded)
+    return f"{LIVE_PREFIX}{idx}|{total}|{icon}|{led_hint}|" + "|".join(padded)
 
 
 DEMO_CASES: tuple[PreviewCase, ...] = (
@@ -526,6 +543,7 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
             _kv("WK", "41%"),
             _kv("CTX", "64%"),
             _kv("TOK", "81K"),
+            led_hint=2,
         ),
     ),
     PreviewCase(

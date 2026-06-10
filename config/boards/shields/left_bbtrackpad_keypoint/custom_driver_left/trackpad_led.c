@@ -9,15 +9,15 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/led.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
 
-#include <zmk/endpoints.h>
-#include <zmk/hid_indicators.h>
-#include <zmk/backlight.h>
 #include <zmk/activity.h>
+#include <zmk/backlight.h>
+#include <zmk/endpoints.h>
+
 #include "trackpad_led.h"
 #include "a320.h"
-
-#define HID_INDICATORS_CAPS_LOCK (1 << 1)
+#include "../../lpm_view/widgets/live_data.h"
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -32,180 +32,194 @@ static const struct device *const led_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_trackpad
 
 #define BRT_MIN 10
 #define BRT_MAX 100
-#define BRT_LOW 20
-#define BRT_STEP 5
+#define BRT_STATUS 35
+#define BRT_ATTENTION 75
+#define BRT_WARNING 90
 
-#define ANIMATION_INTERVAL_MS 20
-#define POLLING_INTERVAL_MS 5
+#define POLLING_INTERVAL_MS 20
+#define LIVE_REFRESH_MS 250
 #define AUTO_OFF_DELAY_MS 5000
 
-#define FLASH_ON_MS 100   /* USB mode ON duration */
-#define FLASH_PERIOD 1000 /* Total USB flash period */
+#define USB_CONFIRM_MS 650
+#define PULSE_GAP_MS 140
 
 static struct k_work_delayable polling_work;
-static struct k_work_delayable animation_work;
-static struct k_work_delayable auto_off_work;
-static struct k_work_delayable usb_flash_work;
 
-static bool capslock_on = false;
-static bool touch_active = false;
-static bool animation_increasing = true;
-static uint8_t brightness = BRT_MIN;
+static bool touch_active;
+static bool keyboard_active;
+static enum zmk_transport selected_transport;
 
+/* Trackpad speed still follows the user's backlight-derived setting. Status
+ * LED patterns use separate brightness constants and never mutate this value. */
 static uint8_t last_valid_brt = BRT_MAX;
-static uint8_t last_backlight_brt = 0;
-static bool manual_override = false;
-static bool keyboard_active = false;
+static uint8_t last_backlight_brt;
+static uint8_t current_led_brt;
 
-static bool usb_flash_state = false; /* true = LED on, false = LED off */
-static bool usb_mode = false;        /* Whether currently in USB transport mode */
+static int64_t preview_until_ms;
+static int64_t usb_confirm_start_ms = -USB_CONFIRM_MS;
+static int64_t next_live_refresh_ms;
+static struct keypoint_live_data_snapshot live_snapshot;
 
 static void set_led_brightness(uint8_t level) {
+    level = MIN(level, BRT_MAX);
+    if (current_led_brt == level) {
+        return;
+    }
+
     if (!device_is_ready(led_dev)) {
         LOG_ERR("LED device not ready");
         return;
     }
+
     for (int i = 0; i < INDICATOR_LED_NUM_LEDS; i++) {
         int err = led_set_brightness(led_dev, i, level);
         if (err < 0) {
             LOG_ERR("Failed to set LED[%d] brightness: %d", i, err);
         }
     }
+
+    current_led_brt = level;
 }
 
-/* USB flashing handler */
-static void usb_flash_work_handler(struct k_work *work) {
-    if (!usb_mode) {
-        /* If no longer in USB mode, ensure LED is off and exit */
-        set_led_brightness(0);
-        return;
-    }
+static bool burst_active(int64_t elapsed_ms, int32_t period_ms, int32_t duration_ms,
+                         uint8_t count) {
+    int64_t phase = elapsed_ms % period_ms;
 
-    usb_flash_state = !usb_flash_state;
-    set_led_brightness(usb_flash_state ? BRT_MAX : 0);
-
-    /* Schedule next toggle: LED stays on for FLASH_ON_MS, off for the rest */
-    k_work_reschedule(&usb_flash_work,
-                      K_MSEC(usb_flash_state ? FLASH_ON_MS : (FLASH_PERIOD - FLASH_ON_MS)));
-}
-
-static void auto_off_work_handler(struct k_work *work) {
-    if (!capslock_on && !touch_active) {
-        manual_override = false;
-        set_led_brightness(0);
-        LOG_DBG("Auto-off triggered after inactivity");
-    }
-}
-
-static void animation_work_handler(struct k_work *work) {
-    if (!capslock_on)
-        return;
-
-    if (animation_increasing) {
-        brightness += BRT_STEP;
-        if (brightness >= BRT_MAX) {
-            brightness = BRT_MAX;
-            animation_increasing = false;
+    for (uint8_t i = 0; i < count; i++) {
+        int32_t start_ms = i * (duration_ms + PULSE_GAP_MS);
+        if (phase >= start_ms && phase < start_ms + duration_ms) {
+            return true;
         }
+    }
+
+    return false;
+}
+
+static uint8_t live_data_level_at(int64_t now_ms) {
+    if (!live_snapshot.has_data) {
+        return burst_active(now_ms, 60000, 60, 1) ? BRT_MIN : 0;
+    }
+
+    if (live_snapshot.stale) {
+        return burst_active(now_ms, 30000, 80, 3) ? BRT_WARNING : 0;
+    }
+
+    switch (live_snapshot.led_hint) {
+    case KEYPOINT_LIVE_DATA_LED_HINT_ERROR:
+        return burst_active(now_ms, 1800, 100, 3) ? BRT_MAX : 0;
+    case KEYPOINT_LIVE_DATA_LED_HINT_WARNING:
+        return burst_active(now_ms, 3000, 100, 2) ? BRT_WARNING : 0;
+    case KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION:
+        return burst_active(now_ms, 2500, 120, 1) ? BRT_ATTENTION : 0;
+    case KEYPOINT_LIVE_DATA_LED_HINT_ACTIVE:
+        return burst_active(now_ms, 5000, 80, 1) ? BRT_STATUS : 0;
+    case KEYPOINT_LIVE_DATA_LED_HINT_NONE:
+        break;
+    }
+
+    switch (live_snapshot.icon) {
+    case KEYPOINT_LIVE_DATA_ICON_CLAUDE:
+        return burst_active(now_ms, 9000, 80, 1) ? BRT_STATUS : 0;
+    case KEYPOINT_LIVE_DATA_ICON_CODEX:
+        return burst_active(now_ms, 9000, 70, 2) ? BRT_STATUS : 0;
+    case KEYPOINT_LIVE_DATA_ICON_WARN:
+        return burst_active(now_ms, 4000, 100, 2) ? BRT_WARNING : 0;
+    default:
+        return 0;
+    }
+}
+
+static uint8_t led_level_at(int64_t now_ms) {
+    if (touch_active || now_ms < preview_until_ms) {
+        return last_valid_brt;
+    }
+
+    int64_t usb_elapsed_ms = now_ms - usb_confirm_start_ms;
+    if (usb_elapsed_ms >= 0 && usb_elapsed_ms < USB_CONFIRM_MS) {
+        return burst_active(usb_elapsed_ms, USB_CONFIRM_MS, 90, 2) ? BRT_MAX : 0;
+    }
+
+    return live_data_level_at(now_ms);
+}
+
+static void refresh_live_snapshot_if_due(int64_t now_ms) {
+    if (now_ms < next_live_refresh_ms) {
+        return;
+    }
+
+    live_snapshot = keypoint_live_data_snapshot_get();
+    next_live_refresh_ms = now_ms + LIVE_REFRESH_MS;
+}
+
+static void update_transport(enum zmk_transport transport, int64_t now_ms) {
+    if (transport == selected_transport) {
+        return;
+    }
+
+    selected_transport = transport;
+    if (transport == ZMK_TRANSPORT_USB) {
+        usb_confirm_start_ms = now_ms;
+        LOG_INF("Trackpad LED USB confirm pulse");
+    }
+}
+
+static void update_activity(bool current_active, uint8_t current_brt) {
+    if (current_active == keyboard_active) {
+        return;
+    }
+
+    keyboard_active = current_active;
+    if (keyboard_active) {
+        last_backlight_brt = current_brt;
+    }
+}
+
+static void update_touch(bool current_touch, uint8_t current_brt, int64_t now_ms) {
+    if (current_touch == touch_active) {
+        return;
+    }
+
+    touch_active = current_touch;
+    if (touch_active) {
+        if (keyboard_active) {
+            last_valid_brt = MAX(BRT_MIN, current_brt);
+        }
+        preview_until_ms = 0;
     } else {
-        brightness -= BRT_STEP;
-        if (brightness <= BRT_LOW) {
-            brightness = BRT_LOW;
-            animation_increasing = true;
-        }
+        preview_until_ms = now_ms + AUTO_OFF_DELAY_MS;
+    }
+}
+
+static void update_backlight(uint8_t current_brt, int64_t now_ms) {
+    if (touch_active || !keyboard_active || current_brt == last_backlight_brt) {
+        return;
     }
 
-    set_led_brightness(brightness);
-    k_work_reschedule(&animation_work, K_MSEC(ANIMATION_INTERVAL_MS));
+    last_backlight_brt = current_brt;
+    if (current_brt > 0) {
+        last_valid_brt = MAX(BRT_MIN, current_brt);
+        preview_until_ms = now_ms + AUTO_OFF_DELAY_MS;
+    } else {
+        preview_until_ms = 0;
+    }
 }
 
 static void polling_work_handler(struct k_work *work) {
+    ARG_UNUSED(work);
+
+    int64_t now_ms = k_uptime_get();
     enum zmk_transport transport = zmk_endpoints_selected().transport;
-    bool current_capslock = (zmk_hid_indicators_get_current_profile() & HID_INDICATORS_CAPS_LOCK);
-    bool current_touch = tp_is_touched();
-    bool current_active = (zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE);
     uint8_t current_brt = zmk_backlight_get_brt();
+    bool current_active = (zmk_activity_get_state() == ZMK_ACTIVITY_ACTIVE);
+    bool current_touch = tp_is_touched();
 
-    /* ---------------- USB mode ---------------- */
-    if (transport == ZMK_TRANSPORT_USB) {
-        if (!usb_mode) {
-            /* Entering USB mode: start flashing task */
-            usb_mode = true;
-            usb_flash_state = false;
-            k_work_reschedule(&usb_flash_work, K_NO_WAIT);
-            LOG_INF("Entered USB flash mode");
-        }
-        /* Skip BLE logic */
-        k_work_reschedule(&polling_work, K_MSEC(POLLING_INTERVAL_MS));
-        return;
-    }
+    update_transport(transport, now_ms);
+    update_activity(current_active, current_brt);
+    update_touch(current_touch, current_brt, now_ms);
+    update_backlight(current_brt, now_ms);
+    refresh_live_snapshot_if_due(now_ms);
 
-    /* ---------------- BLE mode ---------------- */
-    if (usb_mode) {
-        /* Switching from USB back to BLE: stop flashing and turn off LED */
-        usb_mode = false;
-        k_work_cancel_delayable(&usb_flash_work);
-        set_led_brightness(0);
-        LOG_INF("Exited USB flash mode");
-    }
-
-    if (current_active != keyboard_active) {
-        keyboard_active = current_active;
-        if (keyboard_active) {
-            last_backlight_brt = current_brt;
-        }
-    }
-
-    /* CapsLock animation */
-    if (current_capslock != capslock_on) {
-        capslock_on = current_capslock;
-        if (capslock_on) {
-            brightness = BRT_MIN;
-            animation_increasing = true;
-            k_work_reschedule(&animation_work, K_NO_WAIT);
-        } else {
-            k_work_cancel_delayable(&animation_work);
-            manual_override = false;
-
-            if (current_touch) {
-                touch_active = true;
-                manual_override = true;
-                if (keyboard_active) {
-                    last_valid_brt = MAX(BRT_MIN, current_brt);
-                }
-                set_led_brightness(last_valid_brt);
-                k_work_cancel_delayable(&auto_off_work);
-            } else {
-                set_led_brightness(0);
-            }
-        }
-    }
-
-    /* Touch event handling */
-    if (!capslock_on && current_touch != touch_active) {
-        touch_active = current_touch;
-        if (touch_active) {
-            manual_override = true;
-            if (keyboard_active) {
-                last_valid_brt = MAX(BRT_MIN, current_brt);
-            }
-            set_led_brightness(last_valid_brt);
-            k_work_cancel_delayable(&auto_off_work);
-        } else {
-            k_work_reschedule(&auto_off_work, K_MSEC(AUTO_OFF_DELAY_MS));
-        }
-    }
-
-    /* Backlight brightness change */
-    if (!capslock_on && !touch_active && current_brt != last_backlight_brt && keyboard_active) {
-        last_backlight_brt = current_brt;
-        if (current_brt > 0) {
-            manual_override = true;
-            last_valid_brt = MAX(BRT_MIN, current_brt);
-            set_led_brightness(last_valid_brt);
-            k_work_reschedule(&auto_off_work, K_MSEC(AUTO_OFF_DELAY_MS));
-        }
-    }
+    set_led_brightness(led_level_at(now_ms));
 
     k_work_reschedule(&polling_work, K_MSEC(POLLING_INTERVAL_MS));
 }
@@ -218,17 +232,26 @@ static int indicator_tp_init(void) {
         return -ENODEV;
     }
 
-    set_led_brightness(0);
-    usb_mode = false;
-    usb_flash_state = false;
     last_backlight_brt = zmk_backlight_get_brt();
-    capslock_on = touch_active = manual_override = keyboard_active = false;
+    if (last_backlight_brt > 0) {
+        last_valid_brt = MAX(BRT_MIN, last_backlight_brt);
+    }
+
+    current_led_brt = UINT8_MAX;
+    selected_transport = zmk_endpoints_selected().transport;
+    touch_active = false;
+    keyboard_active = false;
+    preview_until_ms = 0;
+    next_live_refresh_ms = 0;
+    live_snapshot = keypoint_live_data_snapshot_get();
+
+    if (selected_transport == ZMK_TRANSPORT_USB) {
+        usb_confirm_start_ms = k_uptime_get();
+    }
+
+    set_led_brightness(0);
 
     k_work_init_delayable(&polling_work, polling_work_handler);
-    k_work_init_delayable(&animation_work, animation_work_handler);
-    k_work_init_delayable(&auto_off_work, auto_off_work_handler);
-    k_work_init_delayable(&usb_flash_work, usb_flash_work_handler);
-
     k_work_reschedule(&polling_work, K_NO_WAIT);
     return 0;
 }

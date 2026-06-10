@@ -38,6 +38,7 @@ K_MUTEX_DEFINE(live_data_mutex);
 
 struct live_data_slot {
     enum keypoint_live_data_icon icon;
+    enum keypoint_live_data_led_hint led_hint;
     char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
     bool has_data;
     int64_t update_ms;
@@ -97,12 +98,31 @@ static int icon_from_field(const char *field, enum keypoint_live_data_icon *icon
     return 0;
 }
 
+static int led_hint_from_field(const char *field, enum keypoint_live_data_led_hint *led_hint) {
+    if (strcmp(field, "0") == 0) {
+        *led_hint = KEYPOINT_LIVE_DATA_LED_HINT_NONE;
+    } else if (strcmp(field, "1") == 0) {
+        *led_hint = KEYPOINT_LIVE_DATA_LED_HINT_ACTIVE;
+    } else if (strcmp(field, "2") == 0) {
+        *led_hint = KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION;
+    } else if (strcmp(field, "3") == 0) {
+        *led_hint = KEYPOINT_LIVE_DATA_LED_HINT_WARNING;
+    } else if (strcmp(field, "4") == 0) {
+        *led_hint = KEYPOINT_LIVE_DATA_LED_HINT_ERROR;
+    } else {
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
 int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, uint8_t *total,
                              enum keypoint_live_data_icon *icon,
+                             enum keypoint_live_data_led_hint *led_hint,
                              char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
-    if (data == NULL || idx == NULL || total == NULL || icon == NULL || out == NULL ||
-        len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
+    if (data == NULL || idx == NULL || total == NULL || icon == NULL || led_hint == NULL ||
+        out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
         return -EINVAL;
     }
 
@@ -112,9 +132,10 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, ui
     }
 
     char icon_field[KEYPOINT_LIVE_DATA_ICON_MAX + 1] = {};
+    char led_hint_field[KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX + 1] = {};
     memset(out, 0, KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * (KEYPOINT_LIVE_DATA_LINE_MAX + 1));
 
-    /* Field layout after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3..8=lines. */
+    /* Field layout after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3=LED, 4..9=lines. */
     uint16_t idx_val = 0, total_val = 0;
     size_t field = 0;
     size_t column = 0;
@@ -123,11 +144,14 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, ui
         const uint8_t ch = data[i];
 
         if (ch == '|') {
-            if (field >= 2 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+            if (field >= 3 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
                 return -EINVAL;
             }
             if ((field == 0 || field == 1) && column == 0) {
                 return -EINVAL; /* empty IDX/TOTAL field */
+            }
+            if (field == 3 && column != KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX) {
+                return -EINVAL; /* LED hint is exactly one digit */
             }
             field++;
             column = 0;
@@ -144,19 +168,22 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, ui
             continue;
         }
 
-        const size_t field_max =
-            (field == 2) ? KEYPOINT_LIVE_DATA_ICON_MAX : KEYPOINT_LIVE_DATA_LINE_MAX;
+        const size_t field_max = (field == 2)   ? KEYPOINT_LIVE_DATA_ICON_MAX
+                                 : (field == 3) ? KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX
+                                                : KEYPOINT_LIVE_DATA_LINE_MAX;
         if (!is_printable_ascii(ch) || column >= field_max) {
             return -EINVAL;
         }
         if (field == 2) {
             icon_field[column++] = (char)ch;
+        } else if (field == 3) {
+            led_hint_field[column++] = (char)ch;
         } else {
-            out[field - 3][column++] = (char)ch;
+            out[field - 4][column++] = (char)ch;
         }
     }
 
-    if (field != 2 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+    if (field != 3 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
         return -EINVAL;
     }
     if (total_val < 1 || total_val > KEYPOINT_LIVE_DATA_PAGE_MAX || idx_val >= total_val) {
@@ -165,7 +192,11 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, ui
 
     *idx = (uint8_t)idx_val;
     *total = (uint8_t)total_val;
-    return icon_from_field(icon_field, icon);
+    int ret = icon_from_field(icon_field, icon);
+    if (ret < 0) {
+        return ret;
+    }
+    return led_hint_from_field(led_hint_field, led_hint);
 }
 
 struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
@@ -179,6 +210,7 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
 
     if (slot != NULL && slot->has_data) {
         snapshot.icon = slot->icon;
+        snapshot.led_hint = slot->led_hint;
         snapshot.has_data = true;
         const int64_t age_ms = k_uptime_get() - slot->update_ms;
         snapshot.stale = age_ms >= KEYPOINT_LIVE_DATA_STALE_MS;
@@ -200,6 +232,7 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
 }
 
 static void store_live_data(uint8_t idx, uint8_t total, enum keypoint_live_data_icon icon,
+                            enum keypoint_live_data_led_hint led_hint,
                             char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                       [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
     k_mutex_lock(&live_data_mutex, K_FOREVER);
@@ -207,6 +240,7 @@ static void store_live_data(uint8_t idx, uint8_t total, enum keypoint_live_data_
     deck_total = total;
     struct live_data_slot *slot = &deck[idx];
     slot->icon = icon;
+    slot->led_hint = led_hint;
     for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
         strncpy(slot->lines[i], lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
         slot->lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
@@ -232,15 +266,17 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
     }
 
     enum keypoint_live_data_icon icon;
+    enum keypoint_live_data_led_hint led_hint;
     uint8_t idx, total;
     char parsed[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
-    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &idx, &total, &icon, parsed);
+    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &idx, &total, &icon,
+                                       &led_hint, parsed);
     if (ret < 0) {
         LOG_WRN("Rejected live-data payload len=%u", len);
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
-    store_live_data(idx, total, icon, parsed);
+    store_live_data(idx, total, icon, led_hint, parsed);
     k_work_reschedule(&live_data_stale_work, K_MSEC(KEYPOINT_LIVE_DATA_STALE_MS + 1));
 
     submit_live_data_display_refresh();

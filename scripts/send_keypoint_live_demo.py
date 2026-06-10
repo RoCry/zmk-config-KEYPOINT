@@ -12,12 +12,14 @@ Wire protocol (mirrors config/boards/shields/lpm_view/widgets/live_data.{h,c}):
 - Transport: BLE GATT write (with or without response) to CHAR_UUID under
   SERVICE_UUID on the LEFT (central) keyboard half. The characteristic
   requires an encrypted link, so the host must be paired with the keyboard.
-- Payload: ASCII "KP2|IDX|TOTAL|ICON|L1|L2|L3|L4|L5|L6", max 70 bytes, no newline.
+- Payload: ASCII "KP2|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6", max 72 bytes, no newline.
   * IDX/TOTAL: this card's 0-based page index and the deck size (each a single
     decimal digit, TOTAL in 1..PAGE_MAX). The firmware stores the whole deck;
     the keyboard's left keys page through it locally.
   * ICON: one of ICON_IDS, selects the 8x8 bitmap in the top status row
     (NONE shows no icon).
+  * LED: one digit status hint for the trackpad LED: 0=normal, 1=active,
+    2=attention, 3=warning, 4=error.
   * Exactly TEXT_LINE_COUNT (6) line fields; each 0..LINE_MAX (8) chars
     from 0x20..0x7E, '|' excluded.
   * The firmware rejects invalid frames with a GATT error and keeps
@@ -39,7 +41,7 @@ an 8-char-wide grid row):
   timestamp (doubles as a clock), L4-L6 detail rows.
 
 Verify any frame without hardware -- renders a pixel-exact PNG of the glass:
-  uv run scripts/preview_keypoint_status.py --frame 'KP2|SUN|SUNNY   |TMP  24C|12:00|UV     5|HUM  40%|AQI   42'
+  uv run scripts/preview_keypoint_status.py --frame 'KP2|0|1|SUN|0|SUNNY   |TMP  24C|12:00|UV     5|HUM  40%|AQI   42'
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ TEXT_LINE_COUNT = 6
 LINE_MAX = 8
 PAGE_MAX = 8  # firmware deck capacity; idx/total are single decimal digits
 DEMO_DECK_SIZE = 3  # pages pushed per cycle so page navigation can be exercised
+LED_HINT_IDS = frozenset({"0", "1", "2", "3", "4"})
 ICON_IDS = frozenset(
     {
         "NONE",
@@ -106,6 +109,7 @@ class DemoSource:
     top canvas, extra1-3 detail rows on the middle canvas."""
 
     icon: str
+    led_hint: str
     line1: str
     line2: str
     extra1: str = ""
@@ -116,10 +120,17 @@ class DemoSource:
 DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     # Grid test card: every line at max width.
     DemoSource(
-        icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH", extra1="12345678", extra2="IJKLMNOP", extra3="87654321"
+        icon="NONE",
+        led_hint="0",
+        line1="MAX8CHAR",
+        line2="ABCDEFGH",
+        extra1="12345678",
+        extra2="IJKLMNOP",
+        extra3="87654321",
     ),
     DemoSource(
         icon="SUN",
+        led_hint="0",
         line1=title("SUNNY"),
         line2=kv("TMP", "24C"),
         extra1=kv("UV", "5"),
@@ -128,6 +139,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="SUN",
+        led_hint="0",
         line1=title("CLEAR"),
         line2=kv("TMP", "31C"),
         extra1=kv("UV", "8"),
@@ -136,6 +148,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CLOUD",
+        led_hint="0",
         line1=title("CLOUDY"),
         line2=kv("TMP", "18C"),
         extra1=kv("HUM", "62%"),
@@ -144,6 +157,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CLOUD",
+        led_hint="0",
         line1=title("OVERCAST"),
         line2=kv("TMP", "15C"),
         extra1=kv("HUM", "71%"),
@@ -152,6 +166,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="RAIN",
+        led_hint="0",
         line1=title("RAIN"),
         line2=kv("TMP", "16C"),
         extra1=kv("RAIN", "3MM"),
@@ -160,6 +175,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="RAIN",
+        led_hint="2",
         line1=title("STORM"),
         line2=kv("TMP", "14C"),
         extra1=kv("RAIN", "9MM"),
@@ -168,6 +184,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="TEMP",
+        led_hint="0",
         line1=title("INDOOR"),
         line2=kv("IN", "25C"),
         extra1=kv("OUT", "19C"),
@@ -176,6 +193,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="TEMP",
+        led_hint="0",
         line1=title("OUTDOOR"),
         line2=kv("OUT", "-3C"),
         extra1=kv("FEEL", "-8C"),
@@ -184,6 +202,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="WARN",
+        led_hint="3",
         line1=title("AQI WARN"),
         line2=kv("AQI", "142"),
         extra1=kv("PM2", "89"),
@@ -191,10 +210,16 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
         extra3=kv("LVL", "BAD"),
     ),
     DemoSource(
-        icon="WARN", line1=title("LOW BATT"), line2=kv("BAT", "9%"), extra1=kv("EST", "2H"), extra2=kv("CHG", "SOON")
+        icon="WARN",
+        led_hint="3",
+        line1=title("LOW BATT"),
+        line2=kv("BAT", "9%"),
+        extra1=kv("EST", "2H"),
+        extra2=kv("CHG", "SOON"),
     ),
     DemoSource(
         icon="CODE",
+        led_hint="1",
         line1=title("CI PASS"),
         line2=kv("MAIN", "OK"),
         extra1=kv("TESTS", "56"),
@@ -203,6 +228,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CODE",
+        led_hint="4",
         line1=title("CI FAIL"),
         line2=kv("PR", "#142"),
         extra1=kv("FAIL", "2"),
@@ -210,10 +236,16 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
         extra3=kv("DUR", "45S"),
     ),
     DemoSource(
-        icon="TIME", line1=title("TZ UTC+8"), line2=kv("NTP", "OK"), extra1=kv("UP", "14D"), extra2=kv("DRIFT", "2S")
+        icon="TIME",
+        led_hint="0",
+        line1=title("TZ UTC+8"),
+        line2=kv("NTP", "OK"),
+        extra1=kv("UP", "14D"),
+        extra2=kv("DRIFT", "2S"),
     ),
     DemoSource(
         icon="CODEX",
+        led_hint="0",
         line1=title("CODEX"),
         line2=kv("5H", "58%"),
         extra1=kv("7D", "45%"),
@@ -222,6 +254,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CODEX",
+        led_hint="3",
         line1=title("CODEX"),
         line2=kv("5H", "91%"),
         extra1=kv("7D", "72%"),
@@ -230,6 +263,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CLAUDE",
+        led_hint="0",
         line1=title("CLAUDE"),
         line2=kv("5H", "22%"),
         extra1=kv("WK", "41%"),
@@ -238,6 +272,7 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     ),
     DemoSource(
         icon="CLAUDE",
+        led_hint="2",
         line1=title("CLAUDE"),
         line2=kv("5H", "76%"),
         extra1=kv("WK", "88%"),
@@ -255,13 +290,20 @@ DemoGenerator: TypeAlias = Callable[[random.Random], DemoSource]
 def random_none_source(rng: random.Random) -> DemoSource:
     _ = rng
     return DemoSource(
-        icon="NONE", line1="MAX8CHAR", line2="ABCDEFGH", extra1="12345678", extra2="IJKLMNOP", extra3="87654321"
+        icon="NONE",
+        led_hint="0",
+        line1="MAX8CHAR",
+        line2="ABCDEFGH",
+        extra1="12345678",
+        extra2="IJKLMNOP",
+        extra3="87654321",
     )
 
 
 def random_sun_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="SUN",
+        led_hint="0",
         line1=title(rng.choice(("SUNNY", "CLEAR"))),
         line2=kv("TMP", f"{rng.randint(18, 35)}C"),
         extra1=kv("UV", str(rng.randint(1, 9))),
@@ -273,6 +315,7 @@ def random_sun_source(rng: random.Random) -> DemoSource:
 def random_cloud_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="CLOUD",
+        led_hint="0",
         line1=title(rng.choice(("CLOUDY", "OVERCAST"))),
         line2=kv("TMP", f"{rng.randint(8, 22)}C"),
         extra1=kv("HUM", f"{rng.randint(35, 85)}%"),
@@ -284,6 +327,7 @@ def random_cloud_source(rng: random.Random) -> DemoSource:
 def random_rain_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="RAIN",
+        led_hint=rng.choice(("0", "2")),
         line1=title(rng.choice(("RAIN", "STORM"))),
         line2=kv("TMP", f"{rng.randint(8, 20)}C"),
         extra1=kv("RAIN", f"{rng.randint(1, 9)}MM"),
@@ -295,6 +339,7 @@ def random_rain_source(rng: random.Random) -> DemoSource:
 def random_temp_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="TEMP",
+        led_hint="0",
         line1=title("INDOOR"),
         line2=kv("IN", f"{rng.randint(18, 28)}C"),
         extra1=kv("OUT", f"{rng.randint(-9, 35)}C"),
@@ -307,6 +352,7 @@ def random_warn_source(rng: random.Random) -> DemoSource:
     if rng.choice((True, False)):
         return DemoSource(
             icon="WARN",
+            led_hint="3",
             line1=title("AQI WARN"),
             line2=kv("AQI", str(rng.randint(101, 199))),
             extra1=kv("PM2", str(rng.randint(60, 99))),
@@ -315,6 +361,7 @@ def random_warn_source(rng: random.Random) -> DemoSource:
         )
     return DemoSource(
         icon="WARN",
+        led_hint="3",
         line1=title("LOW BATT"),
         line2=kv("BAT", f"{rng.randint(5, 19)}%"),
         extra1=kv("EST", f"{rng.randint(1, 9)}H"),
@@ -326,6 +373,7 @@ def random_code_source(rng: random.Random) -> DemoSource:
     if rng.choice((True, False)):
         return DemoSource(
             icon="CODE",
+            led_hint="1",
             line1=title("CI PASS"),
             line2=kv("MAIN", "OK"),
             extra1=kv("TESTS", str(rng.randint(10, 99))),
@@ -334,6 +382,7 @@ def random_code_source(rng: random.Random) -> DemoSource:
         )
     return DemoSource(
         icon="CODE",
+        led_hint="4",
         line1=title("CI FAIL"),
         line2=kv("PR", f"#{rng.randint(100, 999)}"),
         extra1=kv("FAIL", str(rng.randint(1, 9))),
@@ -345,6 +394,7 @@ def random_code_source(rng: random.Random) -> DemoSource:
 def random_time_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="TIME",
+        led_hint="0",
         line1=title("TZ UTC+8"),
         line2=kv("NTP", "OK"),
         extra1=kv("UP", f"{rng.randint(1, 99)}D"),
@@ -353,10 +403,12 @@ def random_time_source(rng: random.Random) -> DemoSource:
 
 
 def random_codex_source(rng: random.Random) -> DemoSource:
+    pct = rng.randint(10, 99)
     return DemoSource(
         icon="CODEX",
+        led_hint="3" if pct >= 90 else "2" if pct >= 75 else "0",
         line1=title("CODEX"),
-        line2=kv("5H", f"{rng.randint(10, 99)}%"),
+        line2=kv("5H", f"{pct}%"),
         extra1=kv("7D", f"{rng.randint(10, 99)}%"),
         extra2=kv("RST", f"{rng.randint(1, 9)}H"),
         extra3=kv("CTX", f"{rng.randint(10, 99)}%"),
@@ -364,10 +416,12 @@ def random_codex_source(rng: random.Random) -> DemoSource:
 
 
 def random_claude_source(rng: random.Random) -> DemoSource:
+    pct = rng.randint(10, 99)
     return DemoSource(
         icon="CLAUDE",
+        led_hint="3" if pct >= 90 else "2" if pct >= 75 else "0",
         line1=title("CLAUDE"),
-        line2=kv("5H", f"{rng.randint(10, 99)}%"),
+        line2=kv("5H", f"{pct}%"),
         extra1=kv("WK", f"{rng.randint(10, 99)}%"),
         extra2=kv("CTX", f"{rng.randint(10, 99)}%"),
         extra3=kv("TOK", f"{rng.randint(10, 99)}K"),
@@ -429,6 +483,12 @@ def validate_icon(icon: str) -> None:
         raise ValueError(f"icon is {len(icon)} chars, max {ICON_MAX}: {icon!r}")
 
 
+def validate_led_hint(led_hint: str) -> None:
+    if led_hint not in LED_HINT_IDS:
+        choices = ", ".join(sorted(LED_HINT_IDS))
+        raise ValueError(f"unsupported LED hint {led_hint!r}; expected one of: {choices}")
+
+
 def validate_lines(lines: Sequence[str]) -> None:
     if len(lines) != TEXT_LINE_COUNT:
         raise ValueError(f"expected {TEXT_LINE_COUNT} text lines, got {len(lines)}")
@@ -443,12 +503,13 @@ def validate_lines(lines: Sequence[str]) -> None:
                 raise ValueError(f"line {index} contains unsupported character {ch!r}")
 
 
-def build_frame(icon: str, lines: Sequence[str], *, idx: int = 0, total: int = 1) -> bytes:
+def build_frame(icon: str, led_hint: str, lines: Sequence[str], *, idx: int = 0, total: int = 1) -> bytes:
     validate_icon(icon=icon)
+    validate_led_hint(led_hint=led_hint)
     validate_lines(lines=lines)
     if not (1 <= total <= PAGE_MAX) or not (0 <= idx < total):
         raise ValueError(f"bad page idx={idx} total={total} (PAGE_MAX={PAGE_MAX})")
-    return f"{PREFIX}{idx}|{total}|{icon}|{'|'.join(lines)}".encode("ascii")
+    return f"{PREFIX}{idx}|{total}|{icon}|{led_hint}|{'|'.join(lines)}".encode("ascii")
 
 
 def lines_for_source(source: DemoSource, data_time: str) -> tuple[str, str, str, str, str, str]:
@@ -537,7 +598,11 @@ async def send_loop(
             total = len(deck)
             for idx, source in enumerate(deck):
                 frame = build_frame(
-                    icon=source.icon, lines=lines_for_source(source=source, data_time=data_time), idx=idx, total=total
+                    icon=source.icon,
+                    led_hint=source.led_hint,
+                    lines=lines_for_source(source=source, data_time=data_time),
+                    idx=idx,
+                    total=total,
                 )
                 await client.write_gatt_char(CHAR_UUID, frame, response=False)
                 typer.echo(f"sent {frame.decode('ascii')}")
