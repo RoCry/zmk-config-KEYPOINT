@@ -115,13 +115,15 @@ static int special_key_listener_cb(const zmk_event_t *eh) {
         return 0;
     if (ev->position == 20) {
         arrow_key_pressed = ev->state;
-        LOG_INF("space position=49 %s", arrow_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("arrow key position=20 %s", arrow_key_pressed ? "PRESSED" : "RELEASED");
     }
 
-    // Scroll key (Space)
-    if (ev->position == 49) {
+    // Scroll key (right-thumb TAB, &mt RSHFT TAB at key position 50). Holding
+    // it switches trackpoint motion from cursor to scroll. Note: this position
+    // is a mod-tap, so holding also engages Right-Shift (host-visible).
+    if (ev->position == 50) {
         scroll_key_pressed = ev->state;
-        LOG_INF("space position=49 %s", scroll_key_pressed ? "PRESSED" : "RELEASED");
+        LOG_INF("scroll key position=50 %s", scroll_key_pressed ? "PRESSED" : "RELEASED");
     }
 
     // ★ NEW: Slow key
