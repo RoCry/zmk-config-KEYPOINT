@@ -54,6 +54,7 @@ STALE_COMPONENT_PREVIEW_FILES = (
     "layer_base.png",
     "layer_symbol.png",
     "profile_grid.png",
+    "status_full_screen.png",
 )
 
 HealthState = Literal["ok", "stale", "empty"]
@@ -341,26 +342,6 @@ def scale_image(image: Image.Image, scale: int) -> Image.Image:
     return image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
 
 
-def write_full_screen_page(images: list[tuple[str, Image.Image]], output: Path, scale: int) -> Path:
-    tile_width = SCREEN_WIDTH * scale
-    tile_height = SCREEN_HEIGHT * scale
-    label_height = 12 * scale
-    padding = 6 * scale
-    width = tile_width + (padding * 2)
-    height = (len(images) * (tile_height + label_height)) + ((len(images) + 1) * padding)
-    sheet = Image.new("L", (width, height), BACKGROUND)
-    draw = ImageDraw.Draw(sheet)
-
-    for index, (name, image) in enumerate(images):
-        x = padding
-        y = padding + index * (tile_height + label_height + padding)
-        sheet.paste(scale_image(image, scale), (x, y))
-        draw.text((x, y + tile_height + 1), name, fill=FOREGROUND, font=font())
-
-    sheet.save(output)
-    return output
-
-
 def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     for stale_name in STALE_COMPONENT_PREVIEW_FILES:
@@ -374,7 +355,7 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
     )
     samples = [
         (
-            "ok / base",
+            "screen_ok_base.png",
             draw_full_screen_preview(
                 live=LiveDataPreview(icon="SUN", lines=("SUNNY", "TMP 24C", "12:00"), health="ok"),
                 profiles=profiles,
@@ -383,7 +364,7 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
             ),
         ),
         (
-            "stale / lower",
+            "screen_stale_lower.png",
             draw_full_screen_preview(
                 live=LiveDataPreview(icon="CODEX", lines=("CODEX", "7D 45%", "12:00"), health="stale"),
                 profiles=profiles,
@@ -392,7 +373,7 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
             ),
         ),
         (
-            "empty / symbol",
+            "screen_empty_symbol.png",
             draw_full_screen_preview(
                 live=LiveDataPreview(icon="WARN", lines=("NO DATA", "WAITING", ""), health="empty"),
                 profiles=profiles,
@@ -402,11 +383,17 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
         ),
     ]
 
-    return [write_full_screen_page(samples, output_dir / "status_full_screen.png", scale=scale)]
+    written: list[Path] = []
+    for name, image in samples:
+        output = output_dir / name
+        scale_image(image, scale).save(output)
+        written.append(output)
+
+    return written
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Render the KEYPOINT 144x72 status UI preview page.")
+    parser = argparse.ArgumentParser(description="Render KEYPOINT 144x72 status UI screenshot previews.")
     parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
     parser.add_argument("--scale", type=int, default=4)
     args = parser.parse_args()

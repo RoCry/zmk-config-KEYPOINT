@@ -17,7 +17,7 @@ def load_module():
     return module
 
 
-def test_status_preview_writes_one_full_screen_page() -> None:
+def test_status_preview_writes_full_screen_screenshots() -> None:
     preview = load_module()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -31,6 +31,7 @@ def test_status_preview_writes_one_full_screen_page() -> None:
             "layer_base.png",
             "layer_symbol.png",
             "profile_grid.png",
+            "status_full_screen.png",
         )
         for stale_name in stale_names:
             (output_dir / stale_name).write_bytes(b"stale")
@@ -38,13 +39,29 @@ def test_status_preview_writes_one_full_screen_page() -> None:
         written = preview.write_preview_set(output_dir, scale=2)
 
         names = {path.name for path in written}
-        assert names == {"status_full_screen.png"}
-        assert {path.name for path in output_dir.iterdir()} == {"status_full_screen.png"}
+        assert names == {
+            "screen_empty_symbol.png",
+            "screen_ok_base.png",
+            "screen_stale_lower.png",
+        }
+        assert {path.name for path in output_dir.iterdir()} == names
 
-        with Image.open(output_dir / "status_full_screen.png") as image:
+        for path in written:
+            with Image.open(path) as image:
+                assert image.mode == "L"
+                assert image.size == (preview.SCREEN_WIDTH * 2, preview.SCREEN_HEIGHT * 2)
+
+
+def test_full_screen_screenshots_are_not_contact_sheets() -> None:
+    preview = load_module()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        output_dir = Path(tmp)
+        preview.write_preview_set(output_dir, scale=1)
+
+        with Image.open(output_dir / "screen_ok_base.png") as image:
             assert image.mode == "L"
-            assert image.size[0] >= preview.SCREEN_WIDTH * 2
-            assert image.size[1] > preview.SCREEN_HEIGHT * 3
+            assert image.size == (preview.SCREEN_WIDTH, preview.SCREEN_HEIGHT)
 
 
 def test_live_data_health_strip_distinguishes_ok_stale_and_empty() -> None:
