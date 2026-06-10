@@ -6,6 +6,7 @@
  */
 
 #include <zephyr/kernel.h>
+#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -133,6 +134,14 @@ static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
         lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
                             KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
                             KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, snapshot.lines[i]);
+    }
+
+    if (snapshot.has_data && snapshot.total_pages > 1) {
+        char page_text[8];
+        snprintf(page_text, sizeof(page_text), "%u/%u", (unsigned)(snapshot.view_index + 1),
+                 (unsigned)snapshot.total_pages);
+        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, KEYPOINT_LIVE_PAGE_Y,
+                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, page_text);
     }
 }
 

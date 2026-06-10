@@ -13,6 +13,9 @@
 #include <zephyr/logging/log.h>
 
 #include <zmk/display.h>
+#include <zmk/keymap.h>
+#include <zmk/event_manager.h>
+#include <zmk/events/position_state_changed.h>
 
 #include "live_data.h"
 
@@ -26,10 +29,23 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 K_MUTEX_DEFINE(live_data_mutex);
 
-static enum keypoint_live_data_icon latest_icon = KEYPOINT_LIVE_DATA_ICON_NONE;
-static char latest_lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
-static bool latest_has_data;
-static int64_t latest_update_ms;
+/* Page navigation: left key (pos 32) = NEXT, right key (pos 33) = PREV. Defer
+ * only on the FN layer, where these keys are &msc SCRL_*; page on every other
+ * layer so the 700ms POINTING temp-layer and held LOWER/SYMBOL don't dead-zone. */
+#define KEYPOINT_LIVE_PAGE_NEXT_POS 32
+#define KEYPOINT_LIVE_PAGE_PREV_POS 33
+#define KEYPOINT_FN_LAYER 3 /* matches FN in config/keypoint.keymap */
+
+struct live_data_slot {
+    enum keypoint_live_data_icon icon;
+    char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
+    bool has_data;
+    int64_t update_ms;
+};
+
+static struct live_data_slot deck[KEYPOINT_LIVE_DATA_PAGE_MAX];
+static uint8_t deck_total; /* number of valid pages; 0 until first frame */
+static uint8_t view_index; /* page currently shown */
 
 static void live_data_display_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
@@ -81,11 +97,12 @@ static int icon_from_field(const char *field, enum keypoint_live_data_icon *icon
     return 0;
 }
 
-int keypoint_live_data_parse(const uint8_t *data, uint16_t len,
+int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *idx, uint8_t *total,
                              enum keypoint_live_data_icon *icon,
                              char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
-    if (data == NULL || icon == NULL || out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
+    if (data == NULL || idx == NULL || total == NULL || icon == NULL || out == NULL ||
+        len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
         return -EINVAL;
     }
 
@@ -97,6 +114,8 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len,
     char icon_field[KEYPOINT_LIVE_DATA_ICON_MAX + 1] = {};
     memset(out, 0, KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * (KEYPOINT_LIVE_DATA_LINE_MAX + 1));
 
+    /* Field layout after the prefix: 0=IDX, 1=TOTAL, 2=ICON, 3..8=lines. */
+    uint16_t idx_val = 0, total_val = 0;
     size_t field = 0;
     size_t column = 0;
 
@@ -104,32 +123,45 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len,
         const uint8_t ch = data[i];
 
         if (ch == '|') {
-            if (field >= KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+            if (field >= 2 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
                 return -EINVAL;
             }
-
             field++;
             column = 0;
             continue;
         }
 
+        if (field == 0 || field == 1) {
+            if (ch < '0' || ch > '9' || column >= KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX) {
+                return -EINVAL;
+            }
+            uint16_t *acc = (field == 0) ? &idx_val : &total_val;
+            *acc = (uint16_t)(*acc * 10 + (ch - '0'));
+            column++;
+            continue;
+        }
+
         const size_t field_max =
-            (field == 0) ? KEYPOINT_LIVE_DATA_ICON_MAX : KEYPOINT_LIVE_DATA_LINE_MAX;
+            (field == 2) ? KEYPOINT_LIVE_DATA_ICON_MAX : KEYPOINT_LIVE_DATA_LINE_MAX;
         if (!is_printable_ascii(ch) || column >= field_max) {
             return -EINVAL;
         }
-
-        if (field == 0) {
+        if (field == 2) {
             icon_field[column++] = (char)ch;
         } else {
-            out[field - 1][column++] = (char)ch;
+            out[field - 3][column++] = (char)ch;
         }
     }
 
-    if (field != KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+    if (field != 2 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+        return -EINVAL;
+    }
+    if (total_val < 1 || total_val > KEYPOINT_LIVE_DATA_PAGE_MAX || idx_val >= total_val) {
         return -EINVAL;
     }
 
+    *idx = (uint8_t)idx_val;
+    *total = (uint8_t)total_val;
     return icon_from_field(icon_field, icon);
 }
 
@@ -138,14 +170,17 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
 
     k_mutex_lock(&live_data_mutex, K_FOREVER);
 
-    snapshot.icon = latest_icon;
-    snapshot.has_data = latest_has_data;
-    const int64_t age_ms = k_uptime_get() - latest_update_ms;
-    snapshot.stale = latest_has_data && age_ms >= KEYPOINT_LIVE_DATA_STALE_MS;
+    snapshot.total_pages = deck_total > 0 ? deck_total : 1;
+    snapshot.view_index = view_index;
+    const struct live_data_slot *slot = (deck_total > 0) ? &deck[view_index] : NULL;
 
-    if (latest_has_data) {
+    if (slot != NULL && slot->has_data) {
+        snapshot.icon = slot->icon;
+        snapshot.has_data = true;
+        const int64_t age_ms = k_uptime_get() - slot->update_ms;
+        snapshot.stale = age_ms >= KEYPOINT_LIVE_DATA_STALE_MS;
         for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
-            strncpy(snapshot.lines[i], latest_lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
+            strncpy(snapshot.lines[i], slot->lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
             snapshot.lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
         }
     }
@@ -161,18 +196,24 @@ struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void) {
     return snapshot;
 }
 
-static void store_live_data(enum keypoint_live_data_icon icon,
+static void store_live_data(uint8_t idx, uint8_t total, enum keypoint_live_data_icon icon,
                             char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                       [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
     k_mutex_lock(&live_data_mutex, K_FOREVER);
 
-    latest_icon = icon;
+    deck_total = total;
+    struct live_data_slot *slot = &deck[idx];
+    slot->icon = icon;
     for (int i = 0; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
-        strncpy(latest_lines[i], lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
-        latest_lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
+        strncpy(slot->lines[i], lines[i], KEYPOINT_LIVE_DATA_LINE_MAX);
+        slot->lines[i][KEYPOINT_LIVE_DATA_LINE_MAX] = '\0';
     }
-    latest_has_data = true;
-    latest_update_ms = k_uptime_get();
+    slot->has_data = true;
+    slot->update_ms = k_uptime_get();
+
+    if (view_index >= deck_total) {
+        view_index = deck_total - 1;
+    }
 
     k_mutex_unlock(&live_data_mutex);
 }
@@ -188,20 +229,55 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
     }
 
     enum keypoint_live_data_icon icon;
+    uint8_t idx, total;
     char parsed[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
-    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &icon, parsed);
+    int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &idx, &total, &icon, parsed);
     if (ret < 0) {
         LOG_WRN("Rejected live-data payload len=%u", len);
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
 
-    store_live_data(icon, parsed);
+    store_live_data(idx, total, icon, parsed);
     k_work_reschedule(&live_data_stale_work, K_MSEC(KEYPOINT_LIVE_DATA_STALE_MS + 1));
 
     submit_live_data_display_refresh();
 
     return len;
 }
+
+static void live_data_page_advance(int delta) {
+    bool changed = false;
+
+    k_mutex_lock(&live_data_mutex, K_FOREVER);
+    if (deck_total > 1) {
+        view_index = (uint8_t)((view_index + deck_total + delta) % deck_total);
+        changed = true;
+    }
+    k_mutex_unlock(&live_data_mutex);
+
+    if (changed) {
+        submit_live_data_display_refresh();
+    }
+}
+
+static int live_data_page_key_listener(const zmk_event_t *eh) {
+    const struct zmk_position_state_changed *ev = as_zmk_position_state_changed(eh);
+    if (ev == NULL || !ev->state) {
+        return ZMK_EV_EVENT_BUBBLE; /* act on press only */
+    }
+    if (ev->position != KEYPOINT_LIVE_PAGE_NEXT_POS && ev->position != KEYPOINT_LIVE_PAGE_PREV_POS) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+    if (zmk_keymap_highest_layer_active() == KEYPOINT_FN_LAYER) {
+        return ZMK_EV_EVENT_BUBBLE; /* FN maps these to &msc SCRL_*; defer */
+    }
+
+    live_data_page_advance(ev->position == KEYPOINT_LIVE_PAGE_NEXT_POS ? +1 : -1);
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(keypoint_live_data_page_keys, live_data_page_key_listener);
+ZMK_SUBSCRIPTION(keypoint_live_data_page_keys, zmk_position_state_changed);
 
 BT_GATT_SERVICE_DEFINE(
     keypoint_live_data_svc,

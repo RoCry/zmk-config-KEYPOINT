@@ -53,6 +53,48 @@ def test_live_data_firmware_contract_constants() -> None:
     assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP2|"' in text
 
 
+def test_live_data_deck_contract_constants() -> None:
+    text = LIVE_DATA_H.read_text()
+
+    assert "#define KEYPOINT_LIVE_DATA_PAGE_MAX 8" in text
+    assert "#define KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX 1" in text
+    # Frame-max macro grew to carry the IDX/TOTAL fields + their separators.
+    assert "((KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX + 1) * 2)" in text
+    # Snapshot exposes the current page + deck size for the indicator.
+    assert "uint8_t view_index;" in text
+    assert "uint8_t total_pages;" in text
+    # Parse signature now yields idx/total.
+    assert "uint8_t *idx, uint8_t *total" in text
+
+
+def test_live_data_page_navigation_listener() -> None:
+    text = LIVE_DATA_C.read_text()
+
+    # Left center-cluster keys (pos 32 NEXT, 33 PREV) drive page navigation.
+    assert "#define KEYPOINT_LIVE_PAGE_NEXT_POS 32" in text
+    assert "#define KEYPOINT_LIVE_PAGE_PREV_POS 33" in text
+    # FN-gated so &msc SCRL_* on those keys still scrolls.
+    assert "zmk_keymap_highest_layer_active() == KEYPOINT_FN_LAYER" in text
+    assert "ZMK_SUBSCRIPTION(keypoint_live_data_page_keys, zmk_position_state_changed)" in text
+    # Wrap-around page advance over the deck.
+    assert "(view_index + deck_total + delta) % deck_total" in text
+
+
+def test_status_widget_renders_page_indicator() -> None:
+    layout = STATUS_LAYOUT_H.read_text()
+    assert "#define KEYPOINT_LIVE_PAGE_Y" in layout
+
+    status = STATUS_C.read_text()
+    assert "snapshot.total_pages > 1" in status
+    assert "KEYPOINT_LIVE_PAGE_Y" in status
+
+
+def test_default_layer_bindings_are_consistent() -> None:
+    # Runs the full binding checker (raises SystemExit with details on drift),
+    # covering the live-data page-nav keys at positions 32/33.
+    load_binding_checker().main()
+
+
 def test_live_data_ble_uuids_are_stable() -> None:
     text = LIVE_DATA_C.read_text()
 

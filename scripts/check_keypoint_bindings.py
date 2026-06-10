@@ -37,6 +37,8 @@ BINDING_CELLS = {
 EXPECTED_DEFAULT_BINDINGS = {
     18: "&mkp LCLK",  # left pointing-device click key
     19: "&mkp LCLK",  # right pointing-device click key
+    32: "&none",  # left center-cluster: live-data NEXT page (driven by live_data.c listener)
+    33: "&none",  # left center-cluster: live-data PREV page (driven by live_data.c listener)
     40: "&kp UP",  # reserve layer removed; right key is plain Up
     45: "&kp C_MUTE",  # left encoder press
     47: "&mt LGUI ESC",  # left thumb: hold Command, tap Escape
