@@ -24,4 +24,4 @@ jobs:
         run: python -m pip install uv
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --with pytest --with "pillow>=11.0" pytest
