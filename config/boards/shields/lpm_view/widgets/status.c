@@ -166,9 +166,9 @@ static bool try_draw_hbar(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const ch
     int pct = (line[1] - '0') * 100 + (line[2] - '0') * 10 + (line[3] - '0');
     if (pct > 100) return false;
 
-    const lv_coord_t bar_y = y + 2;
-    const lv_coord_t bar_h = 8;
-    const lv_coord_t inner_w = KEYPOINT_LIVE_TEXT_WIDTH - 2; /* 65px fill area */
+    const lv_coord_t bar_y = y + KEYPOINT_LIVE_BAR_MARGIN_Y;
+    const lv_coord_t bar_h = KEYPOINT_LIVE_BAR_HEIGHT;
+    const lv_coord_t inner_w = KEYPOINT_LIVE_TEXT_WIDTH - 2 * KEYPOINT_LIVE_BAR_BORDER;
     const lv_coord_t fill_w = (lv_coord_t)(pct * inner_w / 100);
 
     lv_canvas_draw_rect(canvas, x, bar_y, KEYPOINT_LIVE_TEXT_WIDTH, bar_h, ink_dsc); /* border */

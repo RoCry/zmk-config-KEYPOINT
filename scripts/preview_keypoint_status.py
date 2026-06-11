@@ -342,10 +342,12 @@ def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
     if len(line) == 5 and line[0] == "[" and line[4] == "]" and line[1:4].isdigit():
         pct = int(line[1:4])
         if 0 <= pct <= 100:
-            bar_y = y + 2
-            bar_h = 8
-            inner_w = w - 2  # 65px fill area
+            bar_margin_y = LAYOUT["KEYPOINT_LIVE_BAR_MARGIN_Y"]
+            bar_h = LAYOUT["KEYPOINT_LIVE_BAR_HEIGHT"]
+            bar_border = LAYOUT["KEYPOINT_LIVE_BAR_BORDER"]
+            inner_w = w - 2 * bar_border
             fill_w = pct * inner_w // 100
+            bar_y = y + bar_margin_y
             _draw_rect_outline(canvas, x, bar_y, w, bar_h, BLACK)
             if fill_w > 0:
                 canvas.fill_rect(x + 1, bar_y + 1, fill_w, bar_h - 2, BLACK)
