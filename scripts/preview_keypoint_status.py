@@ -357,14 +357,16 @@ def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
 
 def _draw_title_bar(canvas: Canvas, title: str) -> None:
     """Port of draw_live_data_title(): the card title (live line 0) renders
-    inverted -- a filled bar with the text knocked out in the background
-    colour, like the active-profile slot."""
-    if not title:
+    inverted -- a filled bar with the text knocked out in the background colour
+    and centred, like the active-profile slot. The producer pads the title to
+    align its data columns, so trim it before centring."""
+    text = title.strip()
+    if not text:
         return
     x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
     w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
     canvas.fill_rect(x, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"], w, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_HEIGHT"], BLACK)
-    canvas.draw_text(x, LAYOUT["KEYPOINT_LIVE_TEXT_Y"], w, FONT_UNSCII_8, title, align="right", color=WHITE)
+    canvas.draw_text(x, LAYOUT["KEYPOINT_LIVE_TEXT_Y"], w, FONT_UNSCII_8, text, align="center", color=WHITE)
 
 
 def _draw_tip(canvas: Canvas, lines: tuple[str, ...]) -> None:
@@ -390,14 +392,15 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
         return
 
     if snapshot.icon != "NONE":
+        scale = LAYOUT["KEYPOINT_LIVE_ICON_SCALE"]
         for row, bits in enumerate(ICONS[snapshot.icon]):
             for col, bit in enumerate(bits):
                 if bit == "1":
                     canvas.fill_rect(
-                        LAYOUT["KEYPOINT_LIVE_ICON_X"] + col,
-                        LAYOUT["KEYPOINT_LIVE_ICON_Y"] + row,
-                        1,
-                        1,
+                        LAYOUT["KEYPOINT_LIVE_ICON_X"] + col * scale,
+                        LAYOUT["KEYPOINT_LIVE_ICON_Y"] + row * scale,
+                        scale,
+                        scale,
                         BLACK,
                     )
 

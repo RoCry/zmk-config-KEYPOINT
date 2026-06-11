@@ -177,12 +177,15 @@ static bool try_draw_hbar(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const ch
 
 /* The card title (live line 0) renders inverted: a filled foreground bar
  * spanning the text width with the title text knocked out in the background
- * colour. Mirrors the active-profile slot styling. */
+ * colour and centred. Mirrors the active-profile slot styling. The producer
+ * pads the title to align its data columns, so trim it before centring. */
 static void draw_live_data_title(lv_obj_t *canvas, const char *title,
                                  const lv_draw_label_dsc_t *label_dsc,
                                  const lv_draw_rect_dsc_t *ink_dsc,
                                  const lv_draw_rect_dsc_t *bg_dsc) {
-    if (title[0] == '\0') {
+    char trimmed[KEYPOINT_LIVE_DATA_LINE_MAX + 1];
+    const char *text = trim_spaces(title, trimmed, sizeof(trimmed));
+    if (text[0] == '\0') {
         return;
     }
 
@@ -191,8 +194,9 @@ static void draw_live_data_title(lv_obj_t *canvas, const char *title,
 
     lv_draw_label_dsc_t title_dsc = *label_dsc;
     title_dsc.color = bg_dsc->bg_color;
+    title_dsc.align = LV_TEXT_ALIGN_CENTER;
     lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, KEYPOINT_LIVE_TEXT_Y, KEYPOINT_LIVE_TEXT_WIDTH,
-                        &title_dsc, title);
+                        &title_dsc, text);
 }
 
 /* No live data yet: render a centred hint on the top canvas instead of the

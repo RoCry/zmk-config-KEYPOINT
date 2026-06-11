@@ -240,6 +240,12 @@ def test_title_line_renders_inverted_bar() -> None:
     bar_band = canvas.crop((0, bar_y, width, bar_y + bar_h))
     assert preview.WHITE in set(bar_band.tobytes())
 
+    # The title is centred: the knocked-out glyphs' side margins match.
+    glyph_row = bar_y + bar_h // 2
+    whites = [x for x in range(width) if canvas.getpixel((x, glyph_row)) == preview.WHITE]
+    assert whites, "expected knocked-out title glyphs"
+    assert abs(whites[0] - (width - 1 - whites[-1])) <= 2
+
     # A non-title line stays normal: white background in its empty left gutter.
     line1_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
     assert canvas.getpixel((1, line1_y + 4)) == preview.WHITE

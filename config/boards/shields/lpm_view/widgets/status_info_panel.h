@@ -106,7 +106,7 @@ static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state
     }
 }
 
-static const char *trim_layer_label(const char *label, char *buffer, size_t buffer_size) {
+static const char *trim_spaces(const char *label, char *buffer, size_t buffer_size) {
     if (label == NULL || buffer_size == 0) {
         return "";
     }
@@ -137,7 +137,7 @@ static const char *layer_info_text(const struct status_state *state, char *fallb
     }
 
     if (state->layer_label != NULL) {
-        const char *label = trim_layer_label(state->layer_label, fallback, fallback_size);
+        const char *label = trim_spaces(state->layer_label, fallback, fallback_size);
         if (label[0] != '\0') {
             return label;
         }

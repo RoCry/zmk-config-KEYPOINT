@@ -305,7 +305,7 @@ def test_layer_info_uses_small_unframed_trimmed_text() -> None:
 
     assert "draw_rect_outline(" not in layer
     assert "KEYPOINT_LAYER_TEXT_Y" in layer
-    assert "trim_layer_label(" in text
+    assert "trim_spaces(" in text
     assert "lv_font_unscii_8" in text
     assert "layer_label_dsc, LVGL_FOREGROUND, &lv_font_unscii_8" in text
 
@@ -337,6 +337,8 @@ def test_live_data_title_renders_inverted_bar() -> None:
     assert "KEYPOINT_LIVE_TITLE_BAR_Y" in title
     assert "ink_dsc" in title  # filled bar
     assert "title_dsc.color = bg_dsc->bg_color;" in title  # knocked-out text
+    assert "title_dsc.align = LV_TEXT_ALIGN_CENTER;" in title  # centred
+    assert "trim_spaces(" in title  # trim producer padding before centring
 
     # The panel renders the title separately and starts the line loop at 1.
     panel_start = text.index("static void draw_live_data_panel(")
@@ -392,7 +394,8 @@ def test_live_data_icon_does_not_reduce_text_width() -> None:
     assert "const bool has_icon" not in panel
     assert "text_x = has_icon" not in panel
     assert "KEYPOINT_LIVE_TEXT_WIDTH" in panel
-    assert "#define KEYPOINT_LIVE_ICON_SCALE 1" in layout
+    # Icon drawn at 2x to match the battery/endpoint-symbol heights.
+    assert "#define KEYPOINT_LIVE_ICON_SCALE 2" in layout
     assert "KEYPOINT_LIVE_ICON_X" in text
     assert "KEYPOINT_LIVE_ICON_Y" in text
 

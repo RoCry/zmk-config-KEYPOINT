@@ -8,11 +8,13 @@
 #pragma once
 
 /* The live-data icon sits in the top status row, between the battery
- * (ends x=32) and the endpoint symbol (starts x>=52). */
+ * (ends x=32) and the endpoint symbol (starts x>=52). Drawn at 2x so its 16px
+ * box matches the battery (16px) and endpoint symbol (~14px) heights instead
+ * of looking dwarfed; centred in the gap and top-aligned with the battery. */
 #define KEYPOINT_LIVE_ICON_SIZE 8
-#define KEYPOINT_LIVE_ICON_SCALE 1
-#define KEYPOINT_LIVE_ICON_X 38
-#define KEYPOINT_LIVE_ICON_Y 4
+#define KEYPOINT_LIVE_ICON_SCALE 2
+#define KEYPOINT_LIVE_ICON_X 34
+#define KEYPOINT_LIVE_ICON_Y 0
 /* Top lines sit low (text y=26) and extra lines start at the very top of the
  * middle canvas, so the glass shows an even rhythm: ~10px below the status
  * row, 4px between lines, ~10px across the canvas seam. The band spans the
