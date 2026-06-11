@@ -346,6 +346,26 @@ def test_live_data_title_renders_inverted_bar() -> None:
     assert "for (int i = 1; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++)" in panel
 
 
+def test_no_data_renders_centered_tip() -> None:
+    text = STATUS_C.read_text()
+    layout = STATUS_LAYOUT_H.read_text()
+
+    assert "#define KEYPOINT_LIVE_TIP_Y" in layout
+    assert "static void draw_live_data_tip(" in text
+    assert "tip_dsc.align = LV_TEXT_ALIGN_CENTER;" in text
+
+    # The panel shows the tip and returns before the data grid...
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel = text[panel_start : text.index("static void draw_live_data_extra(", panel_start)]
+    assert "draw_live_data_tip(canvas, &snapshot, label_dsc);" in panel
+
+    # ...and the middle-canvas extra block is skipped entirely (so no health
+    # strip is drawn while there is no data).
+    extra = text[text.index("static void draw_live_data_extra(") : text.index("static void draw_top(")]
+    assert "if (!snapshot.has_data) {" in extra
+    assert "30, KEYPOINT_LIVE_HEALTH_Y, 13" not in text
+
+
 def test_live_data_stale_uses_segments_not_opacity() -> None:
     text = STATUS_C.read_text()
 

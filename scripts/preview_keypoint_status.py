@@ -367,11 +367,28 @@ def _draw_title_bar(canvas: Canvas, title: str) -> None:
     canvas.draw_text(x, LAYOUT["KEYPOINT_LIVE_TEXT_Y"], w, FONT_UNSCII_8, title, align="right", color=WHITE)
 
 
+def _draw_tip(canvas: Canvas, lines: tuple[str, ...]) -> None:
+    """Port of draw_live_data_title()'s sibling draw_live_data_tip(): the
+    no-data hint is plain centred text on the top canvas -- none of the
+    live-data styling (no inverted title, columns, page rail or health strip)."""
+    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
+    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    for index, line in enumerate(lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
+        if not line:
+            continue
+        y = LAYOUT["KEYPOINT_LIVE_TIP_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+        canvas.draw_text(x, y, w, FONT_UNSCII_8, line, align="center")
+
+
 def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
     """Top-canvas part of the live panel: icon + lines 1..TOP_LINE_COUNT.
 
     Stale data stays at full contrast: LV_COLOR_DEPTH=1 cannot dim, so the
     firmware signals staleness via the segmented health strip instead."""
+    if not snapshot.has_data:
+        _draw_tip(canvas, snapshot.lines)
+        return
+
     if snapshot.icon != "NONE":
         for row, bits in enumerate(ICONS[snapshot.icon]):
             for col, bit in enumerate(bits):
@@ -418,7 +435,12 @@ def _draw_live_data_page_rail(canvas: Canvas, snapshot: LiveDataSnapshot) -> Non
 
 
 def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
-    """Middle-canvas part of the live panel: lines TOP_LINE_COUNT+1.. + health strip."""
+    """Middle-canvas part of the live panel: lines TOP_LINE_COUNT+1.. + health
+    strip. The no-data state renders only the centred tip on the top canvas, so
+    this whole block is skipped until a deck exists."""
+    if not snapshot.has_data:
+        return
+
     for index, line in enumerate(snapshot.lines[LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"] :]):
         _draw_live_line(
             canvas, line, LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
@@ -427,10 +449,8 @@ def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
     # Health strip geometry from status.c draw_live_data_health_strip().
     health_y = LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
     health_h = LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
-    if not snapshot.has_data:
-        canvas.fill_rect(30, health_y, 13, health_h, BLACK)
-    elif snapshot.stale:
-        for segment_x in (2, 18, 34, 50, 64):
+    if snapshot.stale:
+        for segment_x in (0, 16, 33, 50, 66):
             canvas.fill_rect(segment_x, health_y, 6, health_h, BLACK)
     else:
         canvas.fill_rect(

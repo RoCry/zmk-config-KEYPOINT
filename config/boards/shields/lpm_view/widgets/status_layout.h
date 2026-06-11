@@ -28,6 +28,11 @@
  * brackets the unscii-8 glyphs (text y=26, ~8px tall) with a 1px margin. */
 #define KEYPOINT_LIVE_TITLE_BAR_Y 25
 #define KEYPOINT_LIVE_TITLE_BAR_HEIGHT 11
+/* Before the first frame arrives there is no deck to page through. Instead of
+ * the live-data grid, show a centred hint (NO DATA / WAITING) on the top
+ * canvas -- plain centred text, no inverted title bar, columns, page rail or
+ * health strip. The two lines sit roughly centred in the top live band. */
+#define KEYPOINT_LIVE_TIP_Y 31
 /* Page indicator for a multi-card deck: a scrollbar-style rail with a thumb
  * sized 1/N riding it at the current page's position (position + proportion,
  * no exact count). Lives in the free band between the status row and the first

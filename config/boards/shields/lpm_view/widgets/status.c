@@ -98,15 +98,11 @@ static void draw_live_data_icon(lv_obj_t *canvas, enum keypoint_live_data_icon i
     draw_bitmap_icon(canvas, KEYPOINT_LIVE_ICON_X, KEYPOINT_LIVE_ICON_Y, icon_dsc, rows);
 }
 
+/* Only called once a deck exists (the no-data state shows a centred tip on the
+ * top canvas instead, never the health strip). */
 static void draw_live_data_health_strip(lv_obj_t *canvas,
                                         const struct keypoint_live_data_snapshot *snapshot,
                                         const lv_draw_rect_dsc_t *rect_dsc) {
-    if (!snapshot->has_data) {
-        lv_canvas_draw_rect(canvas, 30, KEYPOINT_LIVE_HEALTH_Y, 13,
-                            KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
-        return;
-    }
-
     if (snapshot->stale) {
         static const lv_coord_t segment_x[] = {0, 16, 33, 50, 66};
         for (size_t i = 0; i < ARRAY_SIZE(segment_x); i++) {
@@ -199,6 +195,25 @@ static void draw_live_data_title(lv_obj_t *canvas, const char *title,
                         &title_dsc, title);
 }
 
+/* No live data yet: render a centred hint on the top canvas instead of the
+ * live-data grid. Plain centred text -- deliberately unlike the data UI (no
+ * inverted title, right-aligned columns, page rail or health strip). */
+static void draw_live_data_tip(lv_obj_t *canvas,
+                               const struct keypoint_live_data_snapshot *snapshot,
+                               const lv_draw_label_dsc_t *label_dsc) {
+    lv_draw_label_dsc_t tip_dsc = *label_dsc;
+    tip_dsc.align = LV_TEXT_ALIGN_CENTER;
+
+    for (int i = 0; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++) {
+        if (snapshot->lines[i][0] == '\0') {
+            continue;
+        }
+        lv_coord_t y = KEYPOINT_LIVE_TIP_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT);
+        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, y, KEYPOINT_LIVE_TEXT_WIDTH, &tip_dsc,
+                            snapshot->lines[i]);
+    }
+}
+
 /* LV_COLOR_DEPTH=1 cannot dim stale data (blending is a >50% opacity
  * threshold), so live data always renders at full contrast; staleness is
  * signaled by the segmented health strip on the middle canvas instead. */
@@ -206,6 +221,11 @@ static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
                                  const lv_draw_rect_dsc_t *ink_dsc,
                                  const lv_draw_rect_dsc_t *bg_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
+
+    if (!snapshot.has_data) {
+        draw_live_data_tip(canvas, &snapshot, label_dsc);
+        return;
+    }
 
     draw_live_data_icon(canvas, snapshot.icon, ink_dsc);
 
@@ -226,6 +246,10 @@ static void draw_live_data_extra(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
                                  const lv_draw_rect_dsc_t *ink_dsc,
                                  const lv_draw_rect_dsc_t *bg_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
+
+    if (!snapshot.has_data) {
+        return; /* the no-data tip lives on the top canvas only */
+    }
 
     for (int i = KEYPOINT_LIVE_TOP_LINE_COUNT; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
         lv_coord_t y = KEYPOINT_LIVE_EXTRA_TEXT_Y +

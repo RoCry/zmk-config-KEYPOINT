@@ -145,6 +145,29 @@ def test_no_data_snapshot_matches_firmware_fallback() -> None:
     )
 
 
+def test_no_data_renders_centered_tip_not_live_grid() -> None:
+    # Before any frame arrives the screen shows a centred hint, not the live
+    # data UI: no inverted title bar, no right-aligned columns, no health strip.
+    snapshot = preview.live_data_snapshot(None)
+    top = preview.draw_top(STATE, snapshot).image
+    middle = preview.draw_middle(STATE, snapshot).image
+    width = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+
+    # No inverted title bar: the bar's top row stays the background colour.
+    assert top.getpixel((1, preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"])) == preview.WHITE
+
+    # The hint is centred: both side gutters stay empty, the middle has ink.
+    tip_y = preview.LAYOUT["KEYPOINT_LIVE_TIP_Y"]
+    assert min(top.crop((0, tip_y, 8, tip_y + 9)).tobytes()) == preview.WHITE
+    assert min(top.crop((width - 8, tip_y, width, tip_y + 9)).tobytes()) == preview.WHITE
+    assert preview.BLACK in set(top.crop((8, tip_y, width - 8, tip_y + 9)).tobytes())
+
+    # No health strip while there is no data.
+    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
+    health_h = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
+    assert min(middle.crop((0, health_y, width, health_y + health_h)).tobytes()) == preview.WHITE
+
+
 def test_live_lines_split_between_top_and_middle_canvas() -> None:
     snapshot = preview.live_data_snapshot(FRESH_FRAME)
     top = preview.draw_top(STATE, snapshot).image
