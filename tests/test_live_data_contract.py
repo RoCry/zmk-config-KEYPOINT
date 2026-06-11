@@ -125,9 +125,13 @@ def test_live_data_uses_generation_staged_deck_commit() -> None:
 def test_status_widget_renders_page_indicator() -> None:
     layout = STATUS_LAYOUT_H.read_text()
     assert "#define KEYPOINT_LIVE_PAGE_Y" in layout
+    assert "#define KEYPOINT_LIVE_PAGE_THUMB_HEIGHT" in layout
 
     status = STATUS_C.read_text()
-    assert "snapshot.total_pages > 1" in status
+    # Scrollbar rail page indicator: hidden for a single-page deck, thumb sized
+    # 1/total_pages riding the rail at view_index.
+    assert "draw_live_data_page_rail" in status
+    assert "snapshot->total_pages <= 1" in status
     assert "KEYPOINT_LIVE_PAGE_Y" in status
 
 
@@ -242,7 +246,7 @@ def test_live_data_splits_lines_between_top_and_middle_canvas() -> None:
     assert "#define KEYPOINT_LIVE_EXTRA_TEXT_Y" in layout
     assert "KEYPOINT_LIVE_DIVIDER" not in layout
     assert "static void draw_live_data_extra(" in text
-    assert "draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc);" in text
+    assert "draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc, &rect_black_dsc);" in text
     assert "lv_canvas_draw_line(" not in text
 
     middle_start = text.index("static void draw_middle(")

@@ -6,7 +6,6 @@
  */
 
 #include <zephyr/kernel.h>
-#include <stdio.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -121,42 +120,101 @@ static void draw_live_data_health_strip(lv_obj_t *canvas,
                         KEYPOINT_LIVE_HEALTH_WIDTH, KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);
 }
 
+/* Page indicator: a scrollbar-style rail with a thumb sized 1/total_pages
+ * riding it at view_index. The rail doubles as a divider between the status row
+ * and the live data. Integer page->pixel math mirrors the preview oracle
+ * (floor division), so the simulator stays pixel-exact. */
+static void draw_live_data_page_rail(lv_obj_t *canvas,
+                                     const struct keypoint_live_data_snapshot *snapshot,
+                                     const lv_draw_rect_dsc_t *ink_dsc,
+                                     const lv_draw_rect_dsc_t *bg_dsc) {
+    if (!snapshot->has_data || snapshot->total_pages <= 1) {
+        return;
+    }
+
+    const lv_coord_t x = KEYPOINT_LIVE_TEXT_X;
+    const lv_coord_t w = KEYPOINT_LIVE_TEXT_WIDTH;
+    const lv_coord_t y = KEYPOINT_LIVE_PAGE_Y;
+    const lv_coord_t h = KEYPOINT_LIVE_PAGE_THUMB_HEIGHT;
+
+    lv_canvas_draw_rect(canvas, x, y, w, 1, ink_dsc); // rail / track
+
+    const lv_coord_t tx =
+        x + (lv_coord_t)((uint32_t)snapshot->view_index * w / snapshot->total_pages);
+    const lv_coord_t tx_next =
+        x + (lv_coord_t)((uint32_t)(snapshot->view_index + 1) * w / snapshot->total_pages);
+    const lv_coord_t tw = tx_next - tx;
+    const lv_coord_t ty = y - h / 2;
+
+    lv_canvas_draw_rect(canvas, tx, ty, tw, h, ink_dsc); // thumb
+    // Round the four corners by punching them back to background.
+    lv_canvas_draw_rect(canvas, tx, ty, 1, 1, bg_dsc);
+    lv_canvas_draw_rect(canvas, tx + tw - 1, ty, 1, 1, bg_dsc);
+    lv_canvas_draw_rect(canvas, tx, ty + h - 1, 1, 1, bg_dsc);
+    lv_canvas_draw_rect(canvas, tx + tw - 1, ty + h - 1, 1, 1, bg_dsc);
+}
+
+/* Detect the [NNN] bar-token (exactly "[" + 3 decimal digits + "]" + NUL) and
+ * draw a filled progress bar in the line slot. Returns true when rendered.
+ * Bar geometry: 2px top margin, 8px outer box, 6px inner fill area (67px wide). */
+static bool try_draw_hbar(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const char *line,
+                          const lv_draw_rect_dsc_t *ink_dsc,
+                          const lv_draw_rect_dsc_t *bg_dsc) {
+    if (line[0] != '[' || line[4] != ']' || line[5] != '\0') return false;
+    if (line[1] < '0' || line[1] > '9' || line[2] < '0' || line[2] > '9' ||
+        line[3] < '0' || line[3] > '9') return false;
+    int pct = (line[1] - '0') * 100 + (line[2] - '0') * 10 + (line[3] - '0');
+    if (pct > 100) return false;
+
+    const lv_coord_t bar_y = y + 2;
+    const lv_coord_t bar_h = 8;
+    const lv_coord_t inner_w = KEYPOINT_LIVE_TEXT_WIDTH - 2; /* 65px fill area */
+    const lv_coord_t fill_w = (lv_coord_t)(pct * inner_w / 100);
+
+    lv_canvas_draw_rect(canvas, x, bar_y, KEYPOINT_LIVE_TEXT_WIDTH, bar_h, ink_dsc); /* border */
+    lv_canvas_draw_rect(canvas, x + 1, bar_y + 1, inner_w, bar_h - 2, bg_dsc);      /* erase */
+    if (fill_w > 0) {
+        lv_canvas_draw_rect(canvas, x + 1, bar_y + 1, fill_w, bar_h - 2, ink_dsc); /* fill */
+    }
+    return true;
+}
+
 /* LV_COLOR_DEPTH=1 cannot dim stale data (blending is a >50% opacity
  * threshold), so live data always renders at full contrast; staleness is
  * signaled by the segmented health strip on the middle canvas instead. */
 static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
-                                 const lv_draw_rect_dsc_t *icon_dsc) {
+                                 const lv_draw_rect_dsc_t *ink_dsc,
+                                 const lv_draw_rect_dsc_t *bg_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
 
-    draw_live_data_icon(canvas, snapshot.icon, icon_dsc);
+    draw_live_data_icon(canvas, snapshot.icon, ink_dsc);
 
     for (int i = 0; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
-                            KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
-                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, snapshot.lines[i]);
+        lv_coord_t y = KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT);
+        if (!try_draw_hbar(canvas, KEYPOINT_LIVE_TEXT_X, y, snapshot.lines[i], ink_dsc, bg_dsc)) {
+            lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, y, KEYPOINT_LIVE_TEXT_WIDTH,
+                                label_dsc, snapshot.lines[i]);
+        }
     }
 
-    if (snapshot.has_data && snapshot.total_pages > 1) {
-        char page_text[8];
-        snprintf(page_text, sizeof(page_text), "%u/%u", (unsigned)(snapshot.view_index + 1),
-                 (unsigned)snapshot.total_pages);
-        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, KEYPOINT_LIVE_PAGE_Y,
-                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, page_text);
-    }
+    draw_live_data_page_rail(canvas, &snapshot, ink_dsc, bg_dsc);
 }
 
 static void draw_live_data_extra(lv_obj_t *canvas, const lv_draw_label_dsc_t *label_dsc,
-                                 const lv_draw_rect_dsc_t *rect_dsc) {
+                                 const lv_draw_rect_dsc_t *ink_dsc,
+                                 const lv_draw_rect_dsc_t *bg_dsc) {
     struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
 
     for (int i = KEYPOINT_LIVE_TOP_LINE_COUNT; i < KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT; i++) {
-        lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X,
-                            KEYPOINT_LIVE_EXTRA_TEXT_Y +
-                                ((i - KEYPOINT_LIVE_TOP_LINE_COUNT) * KEYPOINT_LIVE_TEXT_LINE_HEIGHT),
-                            KEYPOINT_LIVE_TEXT_WIDTH, label_dsc, snapshot.lines[i]);
+        lv_coord_t y = KEYPOINT_LIVE_EXTRA_TEXT_Y +
+                       ((i - KEYPOINT_LIVE_TOP_LINE_COUNT) * KEYPOINT_LIVE_TEXT_LINE_HEIGHT);
+        if (!try_draw_hbar(canvas, KEYPOINT_LIVE_TEXT_X, y, snapshot.lines[i], ink_dsc, bg_dsc)) {
+            lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, y, KEYPOINT_LIVE_TEXT_WIDTH,
+                                label_dsc, snapshot.lines[i]);
+        }
     }
 
-    draw_live_data_health_strip(canvas, &snapshot, rect_dsc);
+    draw_live_data_health_strip(canvas, &snapshot, ink_dsc);
 }
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -199,7 +257,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, output_text);
 
-    draw_live_data_panel(canvas, &label_dsc_wpm, &icon_dsc);
+    draw_live_data_panel(canvas, &label_dsc_wpm, &icon_dsc, &rect_black_dsc);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
@@ -224,7 +282,7 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
 
     // Fill background.
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
-    draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc);
+    draw_live_data_extra(canvas, &live_label_dsc, &rect_white_dsc, &rect_black_dsc);
     draw_profile_grid(canvas, state, &rect_white_dsc, &rect_black_dsc, &profile_label_dsc,
                       &profile_label_dsc_black);
     draw_layer_info(canvas, state, &layer_label_dsc);

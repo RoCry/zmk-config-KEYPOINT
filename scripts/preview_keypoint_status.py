@@ -335,14 +335,22 @@ def output_symbol(state: StatusState) -> str:
 
 
 def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
-    canvas.draw_text(
-        LAYOUT["KEYPOINT_LIVE_TEXT_X"],
-        y,
-        LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
-        FONT_UNSCII_8,
-        line,
-        align="right",
-    )
+    """Render one live-data line. [NNN] tokens (bar encoding) draw a progress
+    rectangle; all other lines draw right-aligned unscii-8 text."""
+    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
+    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    if len(line) == 5 and line[0] == "[" and line[4] == "]" and line[1:4].isdigit():
+        pct = int(line[1:4])
+        if 0 <= pct <= 100:
+            bar_y = y + 2
+            bar_h = 8
+            inner_w = w - 2  # 65px fill area
+            fill_w = pct * inner_w // 100
+            _draw_rect_outline(canvas, x, bar_y, w, bar_h, BLACK)
+            if fill_w > 0:
+                canvas.fill_rect(x + 1, bar_y + 1, fill_w, bar_h - 2, BLACK)
+            return
+    canvas.draw_text(x, y, w, FONT_UNSCII_8, line, align="right")
 
 
 def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
@@ -365,15 +373,32 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
     for index, line in enumerate(snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
         _draw_live_line(canvas, line, LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"])
 
-    if snapshot.has_data and snapshot.total_pages > 1:
-        canvas.draw_text(
-            LAYOUT["KEYPOINT_LIVE_TEXT_X"],
-            LAYOUT["KEYPOINT_LIVE_PAGE_Y"],
-            LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"],
-            FONT_UNSCII_8,
-            f"{snapshot.view_index + 1}/{snapshot.total_pages}",
-            align="right",
-        )
+    _draw_live_data_page_rail(canvas, snapshot)
+
+
+def _draw_live_data_page_rail(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
+    """Port of draw_live_data_page_rail() in status.c: a scrollbar rail (which
+    doubles as a status/data divider) with a thumb sized 1/total_pages riding it
+    at view_index. Floor-division page->pixel math matches the firmware exactly."""
+    if not (snapshot.has_data and snapshot.total_pages > 1):
+        return
+
+    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
+    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    y = LAYOUT["KEYPOINT_LIVE_PAGE_Y"]
+    h = LAYOUT["KEYPOINT_LIVE_PAGE_THUMB_HEIGHT"]
+
+    canvas.fill_rect(x, y, w, 1, BLACK)  # rail / track
+
+    tx = x + snapshot.view_index * w // snapshot.total_pages
+    tx_next = x + (snapshot.view_index + 1) * w // snapshot.total_pages
+    tw = tx_next - tx
+    ty = y - h // 2
+
+    canvas.fill_rect(tx, ty, tw, h, BLACK)  # thumb
+    for corner_x in (tx, tx + tw - 1):  # round the four corners
+        canvas.fill_rect(corner_x, ty, 1, 1, WHITE)
+        canvas.fill_rect(corner_x, ty + h - 1, 1, 1, WHITE)
 
 
 def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:

@@ -20,10 +20,14 @@
 #define KEYPOINT_LIVE_TEXT_Y 26
 #define KEYPOINT_LIVE_TEXT_WIDTH 67
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
-/* Page indicator ("n/N") for a multi-card deck: right-aligned in the free band
- * between the status row and the first live-data line. Shown only when the deck
- * has >1 page. Reuses KEYPOINT_LIVE_TEXT_X / _WIDTH for right alignment. */
-#define KEYPOINT_LIVE_PAGE_Y 14
+/* Page indicator for a multi-card deck: a scrollbar-style rail with a thumb
+ * sized 1/N riding it at the current page's position (position + proportion,
+ * no exact count). Lives in the free band between the status row and the first
+ * live-data line, doubling as a status/data divider. Shown only when the deck
+ * has >1 page. Reuses KEYPOINT_LIVE_TEXT_X / _WIDTH for the rail extent.
+ * KEYPOINT_LIVE_PAGE_Y is the rail (divider) centre; the thumb is centred on it. */
+#define KEYPOINT_LIVE_PAGE_Y 20
+#define KEYPOINT_LIVE_PAGE_THUMB_HEIGHT 5
 
 /* Live-data lines 1..KEYPOINT_LIVE_TOP_LINE_COUNT render on the top canvas;
  * the remaining lines and the health strip render on the middle (profile)

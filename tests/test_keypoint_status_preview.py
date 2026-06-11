@@ -199,13 +199,36 @@ def test_live_text_is_right_aligned_like_firmware() -> None:
     assert min(canvas.crop(left_band).tobytes()) == preview.WHITE
 
 
-def test_page_indicator_only_renders_for_multipage_deck() -> None:
-    single = preview.draw_top(STATE, preview.live_data_snapshot("KP3|A0|0|1|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
-    multi = preview.draw_top(STATE, preview.live_data_snapshot("KP3|A0|1|3|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")).image
-    # Identical icon + lines: the only rendering difference is the "2/3" indicator.
-    assert single.tobytes() != multi.tobytes()
+def _top(frame: str):
+    return preview.draw_top(STATE, preview.live_data_snapshot(frame)).image
+
+
+def test_page_rail_only_renders_for_multipage_deck() -> None:
     page_y = preview.LAYOUT["KEYPOINT_LIVE_PAGE_Y"]
-    assert min(multi.crop((0, page_y, 70, page_y + 8)).tobytes()) == preview.BLACK
+    thumb_h = preview.LAYOUT["KEYPOINT_LIVE_PAGE_THUMB_HEIGHT"]
+    rail_x = preview.LAYOUT["KEYPOINT_LIVE_TEXT_X"]
+    rail_w = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    thumb_top = page_y - thumb_h // 2
+
+    # A single-page deck shows no indicator at all: the band stays blank.
+    single = _top("KP3|A0|0|1|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")
+    band = (0, thumb_top, rail_x + rail_w, thumb_top + thumb_h)
+    assert min(single.crop(band).tobytes()) == preview.WHITE
+
+    # A multi-page deck draws a full-width rail at page_y.
+    first = _top("KP3|A0|0|3|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")
+    last = _top("KP3|A0|2|3|CLAUDE|0|CLAUDE  |5H   76%|14:30|||")
+    assert first.getpixel((rail_x, page_y)) == preview.BLACK
+    assert first.getpixel((rail_x + rail_w - 1, page_y)) == preview.BLACK
+
+    # The thumb (sized 1/N) rides the rail: flush left on page 1, flush right on
+    # the last page. Sample just inside each end, off the rounded corners.
+    left = rail_x + 2
+    right = rail_x + rail_w - 3
+    assert first.getpixel((left, thumb_top)) == preview.BLACK
+    assert first.getpixel((right, thumb_top)) == preview.WHITE
+    assert last.getpixel((left, thumb_top)) == preview.WHITE
+    assert last.getpixel((right, thumb_top)) == preview.BLACK
 
 
 def test_text_wider_than_max_width_fails_fast() -> None:
