@@ -322,6 +322,30 @@ def test_live_data_panel_draws_health_strip() -> None:
     assert "KEYPOINT_LIVE_HEALTH_Y" in text
 
 
+def test_live_data_title_renders_inverted_bar() -> None:
+    text = STATUS_C.read_text()
+    layout = STATUS_LAYOUT_H.read_text()
+
+    assert "#define KEYPOINT_LIVE_TITLE_BAR_Y" in layout
+    assert "#define KEYPOINT_LIVE_TITLE_BAR_HEIGHT" in layout
+
+    # The title (live line 0) draws a filled foreground bar, then the title
+    # text in the background colour -- an inverted highlighted header.
+    title_start = text.index("static void draw_live_data_title(")
+    title_end = text.index("static void draw_live_data_panel(", title_start)
+    title = text[title_start:title_end]
+    assert "KEYPOINT_LIVE_TITLE_BAR_Y" in title
+    assert "ink_dsc" in title  # filled bar
+    assert "title_dsc.color = bg_dsc->bg_color;" in title  # knocked-out text
+
+    # The panel renders the title separately and starts the line loop at 1.
+    panel_start = text.index("static void draw_live_data_panel(")
+    panel_end = text.index("static void draw_top(", panel_start)
+    panel = text[panel_start:panel_end]
+    assert "draw_live_data_title(canvas, snapshot.lines[0]" in panel
+    assert "for (int i = 1; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++)" in panel
+
+
 def test_live_data_stale_uses_segments_not_opacity() -> None:
     text = STATUS_C.read_text()
 

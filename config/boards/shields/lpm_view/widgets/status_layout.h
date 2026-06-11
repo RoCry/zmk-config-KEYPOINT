@@ -22,6 +22,12 @@
 #define KEYPOINT_LIVE_TEXT_Y 26
 #define KEYPOINT_LIVE_TEXT_WIDTH 72
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
+/* The first live-data line is the card title. It renders inverted: a filled
+ * foreground bar across the full text width with the title knocked out in the
+ * background colour, so the card name reads as a highlighted header. The bar
+ * brackets the unscii-8 glyphs (text y=26, ~8px tall) with a 1px margin. */
+#define KEYPOINT_LIVE_TITLE_BAR_Y 25
+#define KEYPOINT_LIVE_TITLE_BAR_HEIGHT 11
 /* Page indicator for a multi-card deck: a scrollbar-style rail with a thumb
  * sized 1/N riding it at the current page's position (position + proportion,
  * no exact count). Lives in the free band between the status row and the first

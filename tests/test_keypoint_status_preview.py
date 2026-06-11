@@ -201,6 +201,27 @@ def test_live_text_is_right_aligned_like_firmware() -> None:
     assert min(canvas.crop(left_band).tobytes()) == preview.WHITE
 
 
+def test_title_line_renders_inverted_bar() -> None:
+    # The card title (live line 0) is a filled foreground bar with the title
+    # text knocked out in the background colour (the active-profile styling).
+    canvas = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
+    width = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    bar_y = preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"]
+    bar_h = preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_HEIGHT"]
+
+    # The bar's top row (above the glyphs) is solid foreground across the full
+    # width: a regular line leaves this region the white background instead.
+    assert canvas.getpixel((1, bar_y)) == preview.BLACK
+    assert canvas.getpixel((width - 2, bar_y)) == preview.BLACK
+    # The title text is knocked out in the background colour inside the bar.
+    bar_band = canvas.crop((0, bar_y, width, bar_y + bar_h))
+    assert preview.WHITE in set(bar_band.tobytes())
+
+    # A non-title line stays normal: white background in its empty left gutter.
+    line1_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+    assert canvas.getpixel((1, line1_y + 4)) == preview.WHITE
+
+
 def _top(frame: str):
     return preview.draw_top(STATE, preview.live_data_snapshot(frame)).image
 

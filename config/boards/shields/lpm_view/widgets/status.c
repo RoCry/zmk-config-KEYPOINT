@@ -179,6 +179,26 @@ static bool try_draw_hbar(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, const ch
     return true;
 }
 
+/* The card title (live line 0) renders inverted: a filled foreground bar
+ * spanning the text width with the title text knocked out in the background
+ * colour. Mirrors the active-profile slot styling. */
+static void draw_live_data_title(lv_obj_t *canvas, const char *title,
+                                 const lv_draw_label_dsc_t *label_dsc,
+                                 const lv_draw_rect_dsc_t *ink_dsc,
+                                 const lv_draw_rect_dsc_t *bg_dsc) {
+    if (title[0] == '\0') {
+        return;
+    }
+
+    lv_canvas_draw_rect(canvas, KEYPOINT_LIVE_TEXT_X, KEYPOINT_LIVE_TITLE_BAR_Y,
+                        KEYPOINT_LIVE_TEXT_WIDTH, KEYPOINT_LIVE_TITLE_BAR_HEIGHT, ink_dsc);
+
+    lv_draw_label_dsc_t title_dsc = *label_dsc;
+    title_dsc.color = bg_dsc->bg_color;
+    lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, KEYPOINT_LIVE_TEXT_Y, KEYPOINT_LIVE_TEXT_WIDTH,
+                        &title_dsc, title);
+}
+
 /* LV_COLOR_DEPTH=1 cannot dim stale data (blending is a >50% opacity
  * threshold), so live data always renders at full contrast; staleness is
  * signaled by the segmented health strip on the middle canvas instead. */
@@ -189,7 +209,9 @@ static void draw_live_data_panel(lv_obj_t *canvas, const lv_draw_label_dsc_t *la
 
     draw_live_data_icon(canvas, snapshot.icon, ink_dsc);
 
-    for (int i = 0; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++) {
+    draw_live_data_title(canvas, snapshot.lines[0], label_dsc, ink_dsc, bg_dsc);
+
+    for (int i = 1; i < KEYPOINT_LIVE_TOP_LINE_COUNT; i++) {
         lv_coord_t y = KEYPOINT_LIVE_TEXT_Y + (i * KEYPOINT_LIVE_TEXT_LINE_HEIGHT);
         if (!try_draw_hbar(canvas, KEYPOINT_LIVE_TEXT_X, y, snapshot.lines[i], ink_dsc, bg_dsc)) {
             lv_canvas_draw_text(canvas, KEYPOINT_LIVE_TEXT_X, y, KEYPOINT_LIVE_TEXT_WIDTH,

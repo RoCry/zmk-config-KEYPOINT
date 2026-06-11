@@ -355,6 +355,18 @@ def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
     canvas.draw_text(x, y, w, FONT_UNSCII_8, line, align="right")
 
 
+def _draw_title_bar(canvas: Canvas, title: str) -> None:
+    """Port of draw_live_data_title(): the card title (live line 0) renders
+    inverted -- a filled bar with the text knocked out in the background
+    colour, like the active-profile slot."""
+    if not title:
+        return
+    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
+    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    canvas.fill_rect(x, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"], w, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_HEIGHT"], BLACK)
+    canvas.draw_text(x, LAYOUT["KEYPOINT_LIVE_TEXT_Y"], w, FONT_UNSCII_8, title, align="right", color=WHITE)
+
+
 def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
     """Top-canvas part of the live panel: icon + lines 1..TOP_LINE_COUNT.
 
@@ -372,7 +384,9 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
                         BLACK,
                     )
 
-    for index, line in enumerate(snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
+    top_lines = snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]
+    _draw_title_bar(canvas, top_lines[0])
+    for index, line in enumerate(top_lines[1:], start=1):
         _draw_live_line(canvas, line, LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"])
 
     _draw_live_data_page_rail(canvas, snapshot)
