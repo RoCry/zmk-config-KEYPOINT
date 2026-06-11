@@ -600,6 +600,16 @@ def _kv(label: str, value: str) -> str:
     return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
 
 
+def _title(text: str) -> str:
+    """Pad a card title to the full line width, mirroring rcink's title()."""
+    return text.ljust(LIVE_LINE_MAX)
+
+
+def _bar(pct: int) -> str:
+    """A [NNN] progress-bar row, mirroring rcink's Row(bar=...) encoding."""
+    return f"[{pct:03d}]"
+
+
 def _card(
     icon: str,
     *lines: str,
@@ -615,80 +625,89 @@ def _card(
     return f"{LIVE_PREFIX}{generation:02X}|{idx}|{total}|{icon}|{led_hint}|" + "|".join(padded)
 
 
+# The KEYPOINT keyboard only ever shows the claude + codex usage cards built by
+# rcink (producer/rcink/keypoint_cards.py, CARD_ORDER = ("claude", "codex")).
+# Each card is: title + a window row (countdown to reset) + a [bar] utilisation
+# row, twice (5H/7D), with L6 empty -- no timestamp line (show_timestamp=False),
+# no weather. Countdown strings follow rcink's fmt_countdown (NOW / 12m / 1h23m
+# / 18h / 4d). These cases mirror that exact shape.
+def _claude_card(five_win: str, five_bar: int, seven_win: str, seven_bar: int, *, led: int, **kw) -> str:
+    return _card(
+        "CLAUDE",
+        _title("CLAUDE"),
+        _kv("5H", five_win),
+        _bar(five_bar),
+        _kv("7D", seven_win),
+        _bar(seven_bar),
+        led_hint=led,
+        **kw,
+    )
+
+
+def _codex_card(five_win: str, five_bar: int, seven_win: str, seven_bar: int, *, led: int, **kw) -> str:
+    return _card(
+        "CODEX",
+        _title("CODEX"),
+        _kv("5H", five_win),
+        _bar(five_bar),
+        _kv("7D", seven_win),
+        _bar(seven_bar),
+        led_hint=led,
+        **kw,
+    )
+
+
 DEMO_CASES: tuple[PreviewCase, ...] = (
     PreviewCase(
-        name="rt_sun_base",
-        state=StatusState(85, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_card(
-            "SUN",
-            "SUNNY".ljust(LIVE_LINE_MAX),
-            _kv("TMP", "24C"),
-            "12:00",
-            _kv("UV", "5"),
-            _kv("HUM", "40%"),
-            _kv("AQI", "42"),
-        ),
+        # Fresh claude card, low usage, BLE connected on the base layer.
+        name="claude_fresh",
+        state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame=_claude_card("1h23m", 22, "4d", 41, led=0),
     ),
     PreviewCase(
-        name="rt_claude_usb_charging",
+        # Codex card, one window into the attention band (>=75%) -> LED hint 2,
+        # USB charging on the lower layer.
+        name="codex_attention",
         state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
-        frame=_card(
-            "CLAUDE",
-            "CLAUDE".ljust(LIVE_LINE_MAX),
-            _kv("5H", "22%"),
-            "14:32",
-            _kv("WK", "41%"),
-            _kv("CTX", "64%"),
-            _kv("TOK", "81K"),
-            led_hint=2,
-        ),
+        frame=_codex_card("12m", 78, "2d", 54, led=2),
+    ),
+    PreviewCase(
+        # Claude near the 5H limit: countdown reads NOW, bars near full, warning.
+        name="claude_warning",
+        state=StatusState(93, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame=_claude_card("NOW", 96, "18h", 89, led=3),
     ),
     PreviewCase(
         # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; stale data
         # stays readable, the segmented health strip flags the staleness.
-        name="rt_codex_stale",
-        state=StatusState(72, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_card(
-            "CODEX",
-            "CODEX".ljust(LIVE_LINE_MAX),
-            _kv("5H", "58%"),
-            "09:30",
-            _kv("7D", "45%"),
-            _kv("RST", "3H"),
-            _kv("CTX", "12%"),
-        ),
+        name="codex_stale",
+        state=StatusState(64, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame=_codex_card("3h5m", 45, "5d", 12, led=0),
         stale=True,
     ),
     PreviewCase(
-        # Every line at the full 8-char width, layer label from L7 fallback.
-        name="rt_storm_max_width",
-        state=StatusState(100, True, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 7),
-        frame=_card(
-            "RAIN",
-            "STORM".ljust(LIVE_LINE_MAX),
-            _kv("TMP", "14C"),
-            "18:05:33",
-            _kv("RAIN", "9MM"),
-            _kv("GUST", "19M"),
-            _kv("VIS", "2KM"),
-        ),
-    ),
-    PreviewCase(
-        # Only 3 of 6 lines used -> the extra block stays empty.
-        name="rt_temp_short",
-        state=StatusState(64, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_card("TEMP", "INDOOR".ljust(LIVE_LINE_MAX), _kv("IN", "25C"), "22:10"),
+        # The real two-card deck (claude + codex): viewing page 2/2 shows the
+        # page rail with the thumb riding to the right.
+        name="claude_codex_deck",
+        state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame=_codex_card("1h5m", 33, "6d", 8, led=0, idx=1, total=2),
     ),
     PreviewCase(
         # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever
-        # received -> WARN / NO DATA / WAITING with the short health bar.
-        name="no_data_open_profile",
+        # received -> centered NO DATA / WAITING tip.
+        name="no_data_waiting",
         state=StatusState(15, False, "ble", 2, _PROFILES_CONNECTED, _PROFILES_BONDED, 2, "SYMBOL"),
     ),
 )
 
 STALE_PREVIEW_FILES = (
-    # Renamed cases.
+    # Renamed cases (weather demo -> real claude/codex cards).
+    "left_screen_rt_sun_base.png",
+    "left_screen_rt_claude_usb_charging.png",
+    "left_screen_rt_codex_stale.png",
+    "left_screen_rt_storm_max_width.png",
+    "left_screen_rt_temp_short.png",
+    "left_screen_no_data_open_profile.png",
     "left_screen_rt_rain_max_width.png",
     # Pre-glass-simulation outputs.
     "screen_ok_base.png",
