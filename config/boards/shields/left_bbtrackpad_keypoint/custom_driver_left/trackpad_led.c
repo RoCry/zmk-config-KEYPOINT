@@ -48,7 +48,7 @@ static const struct device *const led_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_trackpad
 
 #define POLLING_INTERVAL_MS 20
 #define LIVE_REFRESH_MS 250
-#define AUTO_OFF_DELAY_MS 5000
+#define AUTO_OFF_DELAY_MS 1000
 
 #define USB_CONFIRM_MS 650
 #define LIVE_CONFIRM_MS 500
