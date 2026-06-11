@@ -583,7 +583,13 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         name="rt_sun_base",
         state=StatusState(85, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
         frame=_card(
-            "SUN", "SUNNY".ljust(8), _kv("TMP", "24C"), "12:00", _kv("UV", "5"), _kv("HUM", "40%"), _kv("AQI", "42")
+            "SUN",
+            "SUNNY".ljust(LIVE_LINE_MAX),
+            _kv("TMP", "24C"),
+            "12:00",
+            _kv("UV", "5"),
+            _kv("HUM", "40%"),
+            _kv("AQI", "42"),
         ),
     ),
     PreviewCase(
@@ -591,7 +597,7 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
         frame=_card(
             "CLAUDE",
-            "CLAUDE".ljust(8),
+            "CLAUDE".ljust(LIVE_LINE_MAX),
             _kv("5H", "22%"),
             "14:32",
             _kv("WK", "41%"),
@@ -606,7 +612,13 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         name="rt_codex_stale",
         state=StatusState(72, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
         frame=_card(
-            "CODEX", "CODEX".ljust(8), _kv("5H", "58%"), "09:30", _kv("7D", "45%"), _kv("RST", "3H"), _kv("CTX", "12%")
+            "CODEX",
+            "CODEX".ljust(LIVE_LINE_MAX),
+            _kv("5H", "58%"),
+            "09:30",
+            _kv("7D", "45%"),
+            _kv("RST", "3H"),
+            _kv("CTX", "12%"),
         ),
         stale=True,
     ),
@@ -616,7 +628,7 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         state=StatusState(100, True, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 7),
         frame=_card(
             "RAIN",
-            "STORM".ljust(8),
+            "STORM".ljust(LIVE_LINE_MAX),
             _kv("TMP", "14C"),
             "18:05:33",
             _kv("RAIN", "9MM"),
@@ -628,7 +640,7 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         # Only 3 of 6 lines used -> the extra block stays empty.
         name="rt_temp_short",
         state=StatusState(64, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_card("TEMP", "INDOOR".ljust(8), _kv("IN", "25C"), "22:10"),
+        frame=_card("TEMP", "INDOOR".ljust(LIVE_LINE_MAX), _kv("IN", "25C"), "22:10"),
     ),
     PreviewCase(
         # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever

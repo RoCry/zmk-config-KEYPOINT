@@ -15,10 +15,12 @@
 #define KEYPOINT_LIVE_ICON_Y 4
 /* Top lines sit low (text y=26) and extra lines start at the very top of the
  * middle canvas, so the glass shows an even rhythm: ~10px below the status
- * row, 4px between lines, ~10px across the canvas seam. */
-#define KEYPOINT_LIVE_TEXT_X 3
+ * row, 4px between lines, ~10px across the canvas seam. The band spans the
+ * full 72px glass width (x=0) so a 9-char line (9*8=72px) touches both side
+ * frames: label flush-left, value flush-right. */
+#define KEYPOINT_LIVE_TEXT_X 0
 #define KEYPOINT_LIVE_TEXT_Y 26
-#define KEYPOINT_LIVE_TEXT_WIDTH 67
+#define KEYPOINT_LIVE_TEXT_WIDTH 72
 #define KEYPOINT_LIVE_TEXT_LINE_HEIGHT 12
 /* Page indicator for a multi-card deck: a scrollbar-style rail with a thumb
  * sized 1/N riding it at the current page's position (position + proportion,
@@ -35,9 +37,9 @@
  * (middle-canvas overlap + rotate_canvas clipping), so keep content above. */
 #define KEYPOINT_LIVE_TOP_LINE_COUNT 3
 #define KEYPOINT_LIVE_EXTRA_TEXT_Y 0
-#define KEYPOINT_LIVE_HEALTH_X 2
+#define KEYPOINT_LIVE_HEALTH_X 0
 #define KEYPOINT_LIVE_HEALTH_Y 38
-#define KEYPOINT_LIVE_HEALTH_WIDTH 68
+#define KEYPOINT_LIVE_HEALTH_WIDTH 72
 #define KEYPOINT_LIVE_HEALTH_HEIGHT 2
 
 /* Progress bar geometry for [NNN] tokens within a KEYPOINT_LIVE_TEXT_LINE_HEIGHT slot */

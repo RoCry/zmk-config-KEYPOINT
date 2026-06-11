@@ -106,7 +106,8 @@ def test_parse_live_frame_returns_idx_and_total() -> None:
 
 
 def test_live_frame_max_grew_for_led_hint() -> None:
-    assert preview.LIVE_FRAME_MAX == 75
+    # 6 text lines * 9 chars (LINE_MAX) + separators, GEN/IDX/TOTAL/ICON/LED.
+    assert preview.LIVE_FRAME_MAX == 81
 
 
 @pytest.mark.parametrize(
@@ -118,7 +119,7 @@ def test_live_frame_max_grew_for_led_hint() -> None:
         "KP3|GG|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be hex
         "KP3|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
         "KP3|A0|0|1|SUN|0|A|B|C|D|E|F|G",  # too many fields
-        "KP3|A0|0|1|SUN|0|NINECHARS|TMP 24C|12:00|||",  # line longer than LINE_MAX
+        "KP3|A0|0|1|SUN|0|TENCHARS10|TMP 24C|12:00|||",  # line longer than LINE_MAX
         "KP3|A0|0|1|SUN|0|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
         "KP3|A0|0|1|MOON|0|A|B|C|D|E|",  # icon unknown to icon_from_field()
         "KP3|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",  # legacy frame: no GEN/IDX/TOTAL
@@ -190,8 +191,9 @@ def test_health_strip_is_visible_on_glass() -> None:
 
 def test_live_text_is_right_aligned_like_firmware() -> None:
     canvas = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
-    # Third line "12:00" is 40px wide, right-aligned in the 67px column at x=3:
-    # ink starts at x=30, so the left side of its band stays empty.
+    # Third line "12:00" is 40px wide, right-aligned in the full-width 72px
+    # column at x=0: ink starts at x=32, so the left side of its band stays
+    # empty (a bare value with no label hugs the right frame).
     line_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + 2 * preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
     band = (0, line_y, 70, line_y + 9)
     left_band = (0, line_y, 30, line_y + 9)
@@ -232,9 +234,10 @@ def test_page_rail_only_renders_for_multipage_deck() -> None:
 
 
 def test_text_wider_than_max_width_fails_fast() -> None:
+    # A 9-char line (72px) exactly fills the band; a 10th char overflows it.
     canvas = preview.Canvas(preview.CANVAS_SIZE)
     with pytest.raises(ValueError, match="wider"):
-        canvas.draw_text(0, 0, 67, preview.FONT_UNSCII_8, "NINECHARS", align="left")
+        canvas.draw_text(0, 0, 72, preview.FONT_UNSCII_8, "TENCHARS10", align="left")
 
 
 def test_layer_info_text_matches_status_info_panel() -> None:

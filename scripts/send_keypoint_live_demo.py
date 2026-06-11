@@ -22,8 +22,10 @@ Wire protocol (mirrors config/boards/shields/lpm_view/widgets/live_data.{h,c}):
     (NONE shows no icon).
   * LED: one digit status hint for the trackpad LED: 0=normal, 1=active,
     2=attention, 3=warning, 4=error.
-  * Exactly TEXT_LINE_COUNT (6) line fields; each 0..LINE_MAX (8) chars
-    from 0x20..0x7E, '|' excluded.
+  * Exactly TEXT_LINE_COUNT (6) line fields; each 0..LINE_MAX (9) chars
+    from 0x20..0x7E, '|' excluded. A full 9-char line fills the 72px glass
+    edge-to-edge (monospace 8px glyphs), so kv() labels sit flush against the
+    left frame and values flush against the right.
   * The firmware rejects invalid frames with a GATT error and keeps
     showing the previous content.
 - Freshness: data turns stale KEYPOINT_LIVE_DATA_STALE_MS (6 min) after the
@@ -70,7 +72,7 @@ PREFIX = "KP3|"
 GENERATION_FIELD_MAX = 2
 ICON_MAX = 8
 TEXT_LINE_COUNT = 6
-LINE_MAX = 8
+LINE_MAX = 9
 PAGE_MAX = 8  # firmware deck capacity; idx/total are single decimal digits
 DEMO_DECK_SIZE = 3  # pages pushed per cycle so page navigation can be exercised
 LED_HINT_IDS = frozenset({"0", "1", "2", "3", "4"})
@@ -126,11 +128,11 @@ DEFAULT_DEMO_SOURCES: tuple[DemoSource, ...] = (
     DemoSource(
         icon="NONE",
         led_hint="0",
-        line1="MAX8CHAR",
-        line2="ABCDEFGH",
-        extra1="12345678",
-        extra2="IJKLMNOP",
-        extra3="87654321",
+        line1="MAX9CHARS",
+        line2="ABCDEFGHI",
+        extra1="123456789",
+        extra2="IJKLMNOPQ",
+        extra3="987654321",
     ),
     DemoSource(
         icon="SUN",
@@ -296,11 +298,11 @@ def random_none_source(rng: random.Random) -> DemoSource:
     return DemoSource(
         icon="NONE",
         led_hint="0",
-        line1="MAX8CHAR",
-        line2="ABCDEFGH",
-        extra1="12345678",
-        extra2="IJKLMNOP",
-        extra3="87654321",
+        line1="MAX9CHARS",
+        line2="ABCDEFGHI",
+        extra1="123456789",
+        extra2="IJKLMNOPQ",
+        extra3="987654321",
     )
 
 

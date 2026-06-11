@@ -56,7 +56,7 @@ def test_live_data_firmware_contract_constants() -> None:
     text = LIVE_DATA_H.read_text()
 
     assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 6" in text
-    assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 8" in text
+    assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 9" in text
     assert "#define KEYPOINT_LIVE_DATA_ICON_MAX 8" in text
     assert "#define KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX 2" in text
     assert "#define KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX 1" in text
@@ -397,7 +397,7 @@ def test_demo_sender_uses_same_limits() -> None:
     text = SENDER.read_text()
 
     assert "TEXT_LINE_COUNT = 6" in text
-    assert "LINE_MAX = 8" in text
+    assert "LINE_MAX = 9" in text
     assert "GENERATION_FIELD_MAX = 2" in text
     assert "LED_HINT_IDS" in text
     assert "ICON_IDS" in text
@@ -445,8 +445,8 @@ def test_demo_sender_exercises_diverse_icon_data() -> None:
         assert f'icon="{icon}"' in text
 
     assert text.count("DemoSource(") >= 16
-    assert '"MAX8CHAR"' in text
-    assert '"ABCDEFGH"' in text
+    assert '"MAX9CHARS"' in text
+    assert '"ABCDEFGHI"' in text
     # Demo lines exploit the monospace grid: padded label/value columns.
     assert "def kv(" in text
     assert "def title(" in text

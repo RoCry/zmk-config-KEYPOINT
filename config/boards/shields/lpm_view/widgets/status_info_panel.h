@@ -90,11 +90,13 @@ static void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state
                               const lv_draw_rect_dsc_t *background_rect_dsc,
                               const lv_draw_label_dsc_t *foreground_label_dsc,
                               const lv_draw_label_dsc_t *background_label_dsc) {
+    /* Four 15px slots spread flush across the 72px glass (0..71) with even 4px
+     * gaps: the first hugs the left frame, the last (57+15-1=71) the right. */
     static const lv_coord_t slot_offsets[KEYPOINT_STATUS_PROFILE_COUNT][2] = {
-        {2, KEYPOINT_PROFILE_ROW_Y},
-        {20, KEYPOINT_PROFILE_ROW_Y},
+        {0, KEYPOINT_PROFILE_ROW_Y},
+        {19, KEYPOINT_PROFILE_ROW_Y},
         {38, KEYPOINT_PROFILE_ROW_Y},
-        {56, KEYPOINT_PROFILE_ROW_Y},
+        {57, KEYPOINT_PROFILE_ROW_Y},
     };
 
     for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {

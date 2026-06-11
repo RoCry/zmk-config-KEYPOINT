@@ -108,7 +108,7 @@ static void draw_live_data_health_strip(lv_obj_t *canvas,
     }
 
     if (snapshot->stale) {
-        static const lv_coord_t segment_x[] = {2, 18, 34, 50, 64};
+        static const lv_coord_t segment_x[] = {0, 16, 33, 50, 66};
         for (size_t i = 0; i < ARRAY_SIZE(segment_x); i++) {
             lv_canvas_draw_rect(canvas, segment_x[i], KEYPOINT_LIVE_HEALTH_Y, 6,
                                 KEYPOINT_LIVE_HEALTH_HEIGHT, rect_dsc);

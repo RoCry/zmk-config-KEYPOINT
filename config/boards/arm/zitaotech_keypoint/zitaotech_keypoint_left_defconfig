@@ -66,7 +66,7 @@ CONFIG_ZMK_KSCAN_DEBOUNCE_RELEASE_MS=20
 CONFIG_ZMK_USB=y
 CONFIG_ZMK_BLE=y
 
-# Raise the ATT MTU so a full KP3 live-data frame (up to 75 bytes) fits in one
+# Raise the ATT MTU so a full KP3 live-data frame (up to 81 bytes) fits in one
 # write. Zephyr's default L2CAP MTU is 65, which caps host writes at 62 bytes and
 # silently drops full-length cards (write-without-response surfaces no error).
 # See config/boards/shields/lpm_view/widgets/live_data.h (KEYPOINT_LIVE_DATA_FRAME_MAX).
