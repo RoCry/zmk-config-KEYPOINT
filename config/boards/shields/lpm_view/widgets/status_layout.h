@@ -42,7 +42,7 @@
  * has >1 page. Reuses KEYPOINT_LIVE_TEXT_X / _WIDTH for the rail extent.
  * KEYPOINT_LIVE_PAGE_Y is the rail (divider) centre; the thumb is centred on it. */
 #define KEYPOINT_LIVE_PAGE_Y 20
-#define KEYPOINT_LIVE_PAGE_THUMB_HEIGHT 5
+#define KEYPOINT_LIVE_PAGE_THUMB_HEIGHT 3
 
 /* Live-data lines 1..KEYPOINT_LIVE_TOP_LINE_COUNT render on the top canvas;
  * the remaining lines and the health strip render on the middle (profile)
