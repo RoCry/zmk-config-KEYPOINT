@@ -1,6 +1,8 @@
 zephyr_library()
 zephyr_library_sources(custom_driver_right/custom_led.c)
 zephyr_library_sources(custom_driver_right/trackpoint_0x15.c)
+zephyr_library_sources(../../../motion/motion_shaping.c)
+zephyr_library_include_directories(../../../motion)
 zephyr_library_include_directories(${ZEPHYR_BASE}/drivers)
 zephyr_library_include_directories(../../../include)
 zephyr_library_include_directories(${CMAKE_SOURCE_DIR}/include)

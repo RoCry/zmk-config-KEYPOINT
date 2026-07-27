@@ -21,6 +21,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+#include "motion_shaping.h"
 #include "custom_led.h"
 
 LOG_MODULE_REGISTER(trackpoint, LOG_LEVEL_DBG);
@@ -39,29 +40,29 @@ static struct k_work_q tp_workq;
 /* Mouse and scroll setting              */
 /* ========================================================================= */
 
-// --- Scroll direction ---
-#define SCROLL_X_DIR (-CONFIG_TRACKPOINT_SCROLL_X_DIR)
-#define SCROLL_Y_DIR CONFIG_TRACKPOINT_SCROLL_Y_DIR
-
-// --- Scroll sensitivity ---
-#define SCROLL_DEADZONE CONFIG_TRACKPOINT_SCROLL_DEADZONE
-#define SCROLL_INPUT_MAX CONFIG_TRACKPOINT_SCROLL_INPUT_MAX
-#define SCROLL_DIVISOR_SLOW CONFIG_TRACKPOINT_SCROLL_DIVISOR_SLOW
-#define SCROLL_DIVISOR_FAST CONFIG_TRACKPOINT_SCROLL_DIVISOR_FAST
-
-// --- Arrow key threshold / divisor ---
-#define ARROW_DEADZONE CONFIG_TRACKPOINT_SCROLL_DEADZONE
-#define ARROW_INPUT_MAX 256
-#define ARROW_DIVISOR_SLOW CONFIG_TRACKPOINT_SCROLL_DIVISOR_SLOW
-#define ARROW_DIVISOR_FAST CONFIG_TRACKPOINT_SCROLL_DIVISOR_FAST
-
 #define DOMINANT_NUMERATOR CONFIG_TRACKPOINT_DOMINANT_NUMERATOR
 #define DOMINANT_DENOMINATOR CONFIG_TRACKPOINT_DOMINANT_DENOMINATOR
 
-// --- Mouse base setting  ---
-#define MOUSE_BASE_SPEED (CONFIG_TRACKPOINT_MOUSE_BASE_SPEED_PERCENT / 100.0f)
-#define MOUSE_SENS_BASE (CONFIG_TRACKPOINT_MOUSE_SENS_BASE_PERCENT / 100.0f)
-#define MOUSE_SENS_STEP (CONFIG_TRACKPOINT_MOUSE_SENS_STEP_PERCENT / 100.0f)
+#define SLOW_KEY_MULTIPLIER 0.5f
+
+/* ========= Motion shaping (the pure math lives in motion_shaping.c) ========= */
+
+static const struct motion_arrow_config trackpoint_arrow = {
+    .deadzone = CONFIG_TRACKPOINT_ARROW_DEADZONE,
+    .divisor_slow = CONFIG_TRACKPOINT_ARROW_DIVISOR_SLOW,
+    .divisor_fast = CONFIG_TRACKPOINT_ARROW_DIVISOR_FAST,
+};
+
+/* The TrackPoint scales in floats throughout, so it takes no integer
+ * pre-scale: 1/1 leaves the raw delta alone. */
+static const struct motion_cursor_config trackpoint_cursor = {
+    .prescale_num = 1,
+    .prescale_den = 1,
+    .base_speed = CONFIG_TRACKPOINT_MOUSE_BASE_SPEED_PERCENT / 100.0f,
+    .sens_base = CONFIG_TRACKPOINT_MOUSE_SENS_BASE_PERCENT / 100.0f,
+    .sens_step = CONFIG_TRACKPOINT_MOUSE_SENS_STEP_PERCENT / 100.0f,
+    .slow_multiplier = SLOW_KEY_MULTIPLIER,
+};
 
 /* ========= Motion GPIO ========= */
 
@@ -74,10 +75,6 @@ static struct k_work_q tp_workq;
 #define TRACKPOINT_PACKET_LEN 7
 #define TRACKPOINT_MAGIC_BYTE0 0x50
 
-#define SLOW_KEY_MULTIPLIER 0.5f
-
-static float scroll_residual_x = 0;
-static float scroll_residual_y = 0;
 /* ========= Watch Dog ========= */
 static uint32_t last_activity_time = 0;
 #define TRACKPOINT_WDT_TIMEOUT 200
@@ -85,9 +82,7 @@ static uint32_t last_activity_time = 0;
 static bool scroll_key_pressed = false;
 static bool arrow_key_pressed = false;
 static bool slow_key_pressed = false;
-static bool last_scroll_key_pressed = false; // ★ NEW
 static bool last_arrow_key_pressed = false;
-uint32_t last_packet_time = 0;
 
 /* ========= Space + Slow key listener ========= */
 static int special_key_listener_cb(const zmk_event_t *eh) {
@@ -127,10 +122,9 @@ struct trackpoint_data {
     const struct device *dev;
     struct k_work work;
     struct gpio_callback motion_cb_data;
-    struct k_work_delayable enable_irq_work; 
+    struct k_work_delayable enable_irq_work;
     uint32_t last_packet_time;
-    int16_t scroll_residue_x;
-    int16_t scroll_residue_y;
+    struct motion_scroll_residue scroll_residue;
     int16_t arrow_residue_x;
     int16_t arrow_residue_y;
 };
@@ -177,74 +171,17 @@ static int trackpoint_read_packet(const struct device *dev, int8_t *dx, int8_t *
     return 0;
 }
 
+/* Shape one axis of arrow motion, then emit whatever it decided. */
+static void report_arrow_axis(const struct device *dev, int8_t delta, int16_t *residue,
+                              uint16_t key_neg, uint16_t key_pos) {
+    const struct motion_arrow_pulse pulse = motion_arrow_step(&trackpoint_arrow, delta, residue);
+    const uint16_t key = (pulse.direction > 0) ? key_pos : key_neg;
 
-static inline void process_scroll_axis(const struct device *dev, int8_t delta, int16_t *residue,
-                                       uint16_t input_code, int8_t dir_mult) {
-    int abs_delta = abs(delta);
-
-    if (abs_delta <= SCROLL_DEADZONE) {
-        return;
-    }
-
-    if (abs_delta > SCROLL_INPUT_MAX) {
-        abs_delta = SCROLL_INPUT_MAX;
-    }
-
-    float t = (float)abs_delta / SCROLL_INPUT_MAX;
-    t = t * t;
-
-    float f_div = SCROLL_DIVISOR_SLOW - (SCROLL_DIVISOR_SLOW - SCROLL_DIVISOR_FAST) * t;
-
-    int divisor = (int)f_div;
-    if (divisor < 1)
-        divisor = 1;
-
-    *residue += (delta * dir_mult);
-
-    int16_t scroll_ticks = *residue / divisor;
-    if (scroll_ticks != 0) {
-        input_report_rel(dev, input_code, scroll_ticks, true, K_NO_WAIT);
-        *residue %= divisor;
-    }
-
-    *residue = (*residue * 3) / 4;
-}
-
-static inline void process_arrow_axis(const struct device *dev, int8_t delta, int16_t *residue,
-                                      uint16_t key_neg, uint16_t key_pos) {
-
-    int abs_delta = abs(delta);
-
-    if (abs_delta <= ARROW_DEADZONE) {
-        return;
-    }
-
-    if (abs_delta > ARROW_INPUT_MAX) {
-        abs_delta = ARROW_INPUT_MAX;
-    }
-
-    float t = (float)abs_delta / SCROLL_INPUT_MAX;
-    t = t * t;
-
-    float f_div = SCROLL_DIVISOR_SLOW - (SCROLL_DIVISOR_SLOW - SCROLL_DIVISOR_FAST) * t;
-
-    int divisor = (int)f_div;
-    if (divisor < 1)
-        divisor = 1;
-
-    *residue += delta; 
-    int16_t arrow_ticks = *residue / divisor;
-    if (arrow_ticks != 0) {
-        uint16_t key = (arrow_ticks > 0) ? key_pos : key_neg;
-
+    for (uint8_t i = 0; i < pulse.pulses; i++) {
         // 触发 key press + release（脉冲）
         input_report_key(dev, key, 1, true, K_FOREVER);
         input_report_key(dev, key, 0, true, K_FOREVER);
-
-        *residue %= divisor;
     }
-
-    *residue = (*residue * 3) / 4;
 }
 
 static void trackpoint_work_cb(struct k_work *work) {
@@ -257,11 +194,8 @@ static void trackpoint_work_cb(struct k_work *work) {
     if (now - last_activity_time > TRACKPOINT_WDT_TIMEOUT) {
         LOG_WRN("TrackPoint watchdog recovery");
 
-        data->scroll_residue_x = 0;
-        data->scroll_residue_y = 0;
         data->arrow_residue_x = 0;
         data->arrow_residue_y = 0;
-        last_scroll_key_pressed = scroll_key_pressed;
         return;
     }
 
@@ -274,16 +208,12 @@ static void trackpoint_work_cb(struct k_work *work) {
         LOG_WRN("TrackPoint I2C read failed (soft recover)");
 
         /* ⚠️ 不 break，不 sleep，不卡住 */
-        data->scroll_residue_x = 0;
-        data->scroll_residue_y = 0;
-
         return;
     }
 
     last_activity_time = now;
 
-    /* ========= scroll mode detect ========= */
-    bool just_enter_scroll = scroll_key_pressed && !last_scroll_key_pressed;
+    /* ========= arrow mode detect ========= */
     bool just_enter_arrow = arrow_key_pressed && !last_arrow_key_pressed;
 
     if (arrow_key_pressed) {
@@ -293,56 +223,31 @@ static void trackpoint_work_cb(struct k_work *work) {
             data->arrow_residue_y = dy;
         }
 
-        int abs_dx = abs(dx);
-        int abs_dy = abs(dy);
+        motion_dominant_axis(&dx, &dy, DOMINANT_NUMERATOR, DOMINANT_DENOMINATOR);
 
-        if (abs_dy * DOMINANT_DENOMINATOR > abs_dx * DOMINANT_NUMERATOR) {
-            dx = 0;
-        } else if (abs_dx * DOMINANT_DENOMINATOR > abs_dy * DOMINANT_NUMERATOR) {
-            dy = 0;
-        } else {
-            dx = 0;
-            dy = 0;
-        }
+        report_arrow_axis(dev, dx, &data->arrow_residue_x,
+                          INPUT_BTN_0,  // 左
+                          INPUT_BTN_1); // 右
 
-        process_arrow_axis(dev, dx, &data->arrow_residue_x,
-                           INPUT_BTN_0,  // 左
-                           INPUT_BTN_1); // 右
-        
-        process_arrow_axis(dev, dy, &data->arrow_residue_y,
-                           INPUT_BTN_2,  // 上
-                           INPUT_BTN_3); // 下
+        report_arrow_axis(dev, dy, &data->arrow_residue_y,
+                          INPUT_BTN_2,  // 上
+                          INPUT_BTN_3); // 下
         k_msleep(16);
     } else if (scroll_key_pressed) {
 
-        if (just_enter_scroll) {
-            data->scroll_residue_x = dx * SCROLL_X_DIR;
-            data->scroll_residue_y = dy * SCROLL_Y_DIR;
-        }
+        const struct motion_scroll_ticks ticks =
+            motion_scroll_accumulate(&data->scroll_residue, dx, dy);
 
-        float speed = sqrtf((float)(dx * dx + dy * dy));
-        float scale = (speed > 80)   ? 0.05f
-                      : (speed > 40) ? 0.04f
-                      : (speed > 20) ? 0.03f
-                      : (speed > 5)  ? 0.02f
-                                     : 0.015f;
-        scroll_residual_x += dx * scale;
-        scroll_residual_y += dy * scale;
-
-        int16_t out_x = (int16_t)scroll_residual_x;
-        int16_t out_y = (int16_t)scroll_residual_y;
-
-        scroll_residual_x -= out_x;
-        scroll_residual_y -= out_y;
-        input_report_rel(dev, INPUT_REL_HWHEEL, -out_x, false, K_FOREVER);
-        input_report_rel(dev, INPUT_REL_WHEEL, out_y, true, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_HWHEEL, -ticks.x, false, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_WHEEL, ticks.y, true, K_FOREVER);
         k_msleep(25);
 
     } else {
 
-        uint8_t tp_led_brt = custom_led_get_last_valid_brightness();
-        float tp_factor = MOUSE_SENS_BASE + MOUSE_SENS_STEP * tp_led_brt;
-            
+        /* Speed preference. On this keyboard it rides in on the LED brightness
+         * -- one physical knob drives both. Odd, but shipped. */
+        const uint8_t speed_preference = custom_led_get_last_valid_brightness();
+
 #ifdef CONFIG_TRACKPOINT_EXPONENTIAL
         uint32_t delta = now - data->last_packet_time;
         float exp_mult = trackpoint_exponential_factor(dx, dy, delta);
@@ -350,16 +255,15 @@ static void trackpoint_work_cb(struct k_work *work) {
         float exp_mult = 1.0f;
 #endif
 
-        float slow_mult = slow_key_pressed ? SLOW_KEY_MULTIPLIER : 1.0f;
-
-        float fx = dx * MOUSE_BASE_SPEED * tp_factor * exp_mult * slow_mult;
-        float fy = dy * MOUSE_BASE_SPEED * tp_factor * exp_mult * slow_mult;
+        const float fx = motion_cursor_scale(&trackpoint_cursor, dx, speed_preference,
+                                             slow_key_pressed, exp_mult);
+        const float fy = motion_cursor_scale(&trackpoint_cursor, dy, speed_preference,
+                                             slow_key_pressed, exp_mult);
 
         input_report_rel(dev, INPUT_REL_X, -(int)fx, false, K_NO_WAIT);
         input_report_rel(dev, INPUT_REL_Y, -(int)fy, true, K_NO_WAIT);
     }
 
-    last_scroll_key_pressed = scroll_key_pressed;
     last_arrow_key_pressed = arrow_key_pressed;
     data->last_packet_time = now;
     k_msleep(5);
@@ -396,8 +300,7 @@ static int trackpoint_init(const struct device *dev) {
     k_mutex_init(&trackpoint_i2c_mutex);
 
     data->dev = dev;
-    data->scroll_residue_x = 0;
-    data->scroll_residue_y = 0;
+    data->scroll_residue = (struct motion_scroll_residue){0};
     data->arrow_residue_x = 0;
     data->arrow_residue_y = 0;
     data->last_packet_time = k_uptime_get_32();

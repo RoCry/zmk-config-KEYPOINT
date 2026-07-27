@@ -10,10 +10,8 @@
 #include <stdint.h>
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
-#include <stdlib.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
-#include <math.h>
 #include <zephyr/sys/util.h>
 #include <zmk/event_manager.h>
 #include <zmk/events/position_state_changed.h>
@@ -23,6 +21,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 
+#include "motion_shaping.h"
 #include "trackpad_led.h"
 #include "a320.h"
 
@@ -39,29 +38,29 @@ K_THREAD_STACK_DEFINE(a320_workq_stack, A320_WORKQ_STACK_SIZE);
 static struct k_work_q a320_workq;
 
 
-// --- 滚轮方向配置 ---
-#define SCROLL_X_DIR (-CONFIG_A320_SCROLL_X_DIR)
-#define SCROLL_Y_DIR CONFIG_A320_SCROLL_Y_DIR
-
-// --- 滚轮灵敏度与粒度配置 ---
-#define SCROLL_DEADZONE CONFIG_A320_SCROLL_DEADZONE
-#define SCROLL_INPUT_MAX CONFIG_A320_SCROLL_INPUT_MAX
-#define SCROLL_DIVISOR_SLOW CONFIG_A320_SCROLL_DIVISOR_SLOW
-#define SCROLL_DIVISOR_FAST CONFIG_A320_SCROLL_DIVISOR_FAST
-
-// --- Arrow key threshold / divisor ---
-#define ARROW_DEADZONE CONFIG_A320_SCROLL_DEADZONE
-#define ARROW_INPUT_MAX 128
-#define ARROW_DIVISOR_SLOW CONFIG_A320_SCROLL_DIVISOR_SLOW
-#define ARROW_DIVISOR_FAST CONFIG_A320_SCROLL_DIVISOR_FAST
-
 #define DOMINANT_NUMERATOR CONFIG_A320_DOMINANT_NUMERATOR
 #define DOMINANT_DENOMINATOR CONFIG_A320_DOMINANT_DENOMINATOR
 
-// --- Mouse base setting (Kconfig 为整数百分比，这里除以 100 转为浮点数) ---
-#define MOUSE_BASE_SPEED (CONFIG_A320_MOUSE_BASE_SPEED_PERCENT / 100.0f)
-#define MOUSE_SENS_BASE (CONFIG_A320_MOUSE_SENS_BASE_PERCENT / 100.0f)
-#define MOUSE_SENS_STEP (CONFIG_A320_MOUSE_SENS_STEP_PERCENT / 100.0f)
+#define SLOW_KEY_MULTIPLIER 0.5f
+
+/* ========= Motion shaping (the pure math lives in motion_shaping.c) ========= */
+
+static const struct motion_arrow_config a320_arrow = {
+    .deadzone = CONFIG_A320_ARROW_DEADZONE,
+    .divisor_slow = CONFIG_A320_ARROW_DIVISOR_SLOW,
+    .divisor_fast = CONFIG_A320_ARROW_DIVISOR_FAST,
+};
+
+/* The 3/4 integer pre-scale is the A320's own coarse gain; it truncates, and
+ * that truncation is the trackpad's shipped feel. */
+static const struct motion_cursor_config a320_cursor = {
+    .prescale_num = 3,
+    .prescale_den = 4,
+    .base_speed = 1.0f,
+    .sens_base = CONFIG_A320_MOUSE_SENS_BASE_PERCENT / 100.0f,
+    .sens_step = CONFIG_A320_MOUSE_SENS_STEP_PERCENT / 100.0f,
+    .slow_multiplier = SLOW_KEY_MULTIPLIER,
+};
 
 /* ========= Motion GPIO ========= */
 
@@ -73,20 +72,15 @@ static struct k_work_q a320_workq;
 #define A320_I2C_ADDR 0x3B
 #define A320_PACKET_LEN 3
 
-#define SLOW_KEY_MULTIPLIER 0.5f
 #define TOUCH_IDLE_TIMEOUT 50 // 30~80ms 看手感
 /* ========= Watch Dog ========= */
-static float scroll_residual_x = 0;
-static float scroll_residual_y = 0;
 static uint32_t last_activity_time = 0;
 #define A320_WDT_TIMEOUT 200
 /* ========= global ========= */
 static bool scroll_key_pressed = false;
 static bool arrow_key_pressed = false;
 static bool slow_key_pressed = false;
-static bool last_scroll_mode_active = false;
 static bool last_arrow_key_pressed = false;
-uint32_t last_packet_time = 0;
 static uint32_t last_touch_time = 0;
 
 /* ========= Space + Slow Key listener ========= */
@@ -126,8 +120,7 @@ struct a320_data {
     struct gpio_callback motion_cb_data;
     struct k_work_delayable enable_irq_work; // ⭐ 新增
     uint32_t last_packet_time;
-    int16_t scroll_residue_x;
-    int16_t scroll_residue_y;
+    struct motion_scroll_residue scroll_residue;
     int16_t arrow_residue_x;
     int16_t arrow_residue_y;
 };
@@ -160,74 +153,17 @@ out:
     return ret;
 }
 
-static inline void process_scroll_axis(const struct device *dev, int8_t delta, int16_t *residue,
-                                       uint16_t input_code, int8_t dir_mult) {
-    int abs_delta = abs(delta);
+/* Shape one axis of arrow motion, then emit whatever it decided. */
+static void report_arrow_axis(const struct device *dev, int8_t delta, int16_t *residue,
+                              uint16_t key_neg, uint16_t key_pos) {
+    const struct motion_arrow_pulse pulse = motion_arrow_step(&a320_arrow, delta, residue);
+    const uint16_t key = (pulse.direction > 0) ? key_pos : key_neg;
 
-    if (abs_delta <= SCROLL_DEADZONE) {
-        return;
-    }
-
-    if (abs_delta > SCROLL_INPUT_MAX) {
-        abs_delta = SCROLL_INPUT_MAX;
-    }
-
-    float t = (float)abs_delta / SCROLL_INPUT_MAX;
-    t = t * t;
-
-    float f_div = SCROLL_DIVISOR_SLOW - (SCROLL_DIVISOR_SLOW - SCROLL_DIVISOR_FAST) * t;
-
-    int divisor = (int)f_div;
-    if (divisor < 1)
-        divisor = 1;
-
-    *residue += (delta * dir_mult);
-
-    int16_t scroll_ticks = *residue / divisor;
-    if (scroll_ticks != 0) {
-        input_report_rel(dev, input_code, scroll_ticks, true, K_NO_WAIT);
-        *residue %= divisor;
-    }
-
-    *residue = (*residue * 3) / 4;
-}
-
-static inline void process_arrow_axis(const struct device *dev, int8_t delta, int16_t *residue,
-                                      uint16_t key_neg, uint16_t key_pos) {
-
-    int abs_delta = abs(delta);
-
-    if (abs_delta <= ARROW_DEADZONE) {
-        return;
-    }
-
-    if (abs_delta > ARROW_INPUT_MAX) {
-        abs_delta = ARROW_INPUT_MAX;
-    }
-
-    
-    float t = (float)abs_delta / SCROLL_INPUT_MAX;
-    t = t * t;
-
-    float f_div = SCROLL_DIVISOR_SLOW - (SCROLL_DIVISOR_SLOW - SCROLL_DIVISOR_FAST) * t;
-
-    int divisor = (int)f_div;
-    if (divisor < 1)
-        divisor = 1;
-
-    *residue += delta; 
-    int16_t arrow_ticks = *residue / divisor;
-    if (arrow_ticks != 0) {
-        uint16_t key = (arrow_ticks > 0) ? key_pos : key_neg;
-
+    for (uint8_t i = 0; i < pulse.pulses; i++) {
         // 触发 key press + release（脉冲）
         input_report_key(dev, key, 1, true, K_FOREVER);
         input_report_key(dev, key, 0, true, K_FOREVER);
-
-        *residue %= divisor;
     }
-
-    *residue = (*residue * 3) / 4;
 }
 
 static void a320_work_cb(struct k_work *work) {
@@ -240,13 +176,8 @@ static void a320_work_cb(struct k_work *work) {
     if (now - last_activity_time > A320_WDT_TIMEOUT) {
         LOG_WRN("A320 watchdog recovery");
 
-        data->scroll_residue_x = 0;
-        data->scroll_residue_y = 0;
         data->arrow_residue_x = 0;
         data->arrow_residue_y = 0;
-
-        last_scroll_mode_active =
-            IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
         last_arrow_key_pressed = arrow_key_pressed;
 
         return;
@@ -291,7 +222,6 @@ static void a320_work_cb(struct k_work *work) {
     /* ========= scroll / arrow mode 切换检测 ========= */
     bool scroll_mode_active =
         IS_ENABLED(CONFIG_A320_START_IN_SCROLL_MODE) ? !scroll_key_pressed : scroll_key_pressed;
-    bool just_enter_scroll = scroll_mode_active && !last_scroll_mode_active;
     bool just_enter_arrow = arrow_key_pressed && !last_arrow_key_pressed;
 
     if (arrow_key_pressed) {
@@ -301,59 +231,34 @@ static void a320_work_cb(struct k_work *work) {
             data->arrow_residue_y = dy;
         }
 
-        int abs_dx = abs(dx);
-        int abs_dy = abs(dy);
+        motion_dominant_axis(&dx, &dy, DOMINANT_NUMERATOR, DOMINANT_DENOMINATOR);
 
-        if (abs_dy * DOMINANT_DENOMINATOR > abs_dx * DOMINANT_NUMERATOR) {
-            dx = 0;
-        } else if (abs_dx * DOMINANT_DENOMINATOR > abs_dy * DOMINANT_NUMERATOR) {
-            dy = 0;
-        } else {
-            dx = 0;
-            dy = 0;
-        }
+        report_arrow_axis(dev, dx, &data->arrow_residue_x, INPUT_BTN_1, INPUT_BTN_0);
 
-        process_arrow_axis(dev, dx, &data->arrow_residue_x, INPUT_BTN_1, INPUT_BTN_0);
-
-        process_arrow_axis(dev, dy, &data->arrow_residue_y, INPUT_BTN_3, INPUT_BTN_2);
+        report_arrow_axis(dev, dy, &data->arrow_residue_y, INPUT_BTN_3, INPUT_BTN_2);
     } else if (scroll_mode_active) {
 
-        if (just_enter_scroll) {
-            data->scroll_residue_x = dx * SCROLL_X_DIR;
-            data->scroll_residue_y = dy * SCROLL_Y_DIR;
-        }
-        float speed = sqrtf((float)(dx * dx + dy * dy));
-        float scale = (speed > 80)   ? 0.05f
-                      : (speed > 40) ? 0.04f
-                      : (speed > 20) ? 0.03f
-                      : (speed > 5)  ? 0.02f
-                                     : 0.015f;
-        scroll_residual_x += dx * scale;
-        scroll_residual_y += dy * scale;
+        const struct motion_scroll_ticks ticks =
+            motion_scroll_accumulate(&data->scroll_residue, dx, dy);
 
-        int16_t out_x = (int16_t)scroll_residual_x;
-        int16_t out_y = (int16_t)scroll_residual_y;
-
-        scroll_residual_x -= out_x;
-        scroll_residual_y -= out_y;
-        input_report_rel(dev, INPUT_REL_HWHEEL, out_x, false, K_FOREVER);
-        input_report_rel(dev, INPUT_REL_WHEEL, -out_y, true, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_HWHEEL, ticks.x, false, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_WHEEL, -ticks.y, true, K_FOREVER);
         k_msleep(25);
     } else {
 
-        uint8_t a320_led_brt = indicator_tp_get_last_valid_brightness();
-        float a320_factor = 0.4f + 0.01f * a320_led_brt;
+        /* Speed preference. On this keyboard it rides in on the indicator LED
+         * brightness -- one physical knob drives both. Odd, but shipped. */
+        const uint8_t speed_preference = indicator_tp_get_last_valid_brightness();
 
-        float slow_mult = slow_key_pressed ? SLOW_KEY_MULTIPLIER : 1.0f;
-
-        float fx = dx * 3 / 4 * a320_factor * slow_mult;
-        float fy = dy * 3 / 4 * a320_factor * slow_mult;
+        const float fx =
+            motion_cursor_scale(&a320_cursor, dx, speed_preference, slow_key_pressed, 1.0f);
+        const float fy =
+            motion_cursor_scale(&a320_cursor, dy, speed_preference, slow_key_pressed, 1.0f);
 
         input_report_rel(dev, INPUT_REL_X, (int)fx, false, K_NO_WAIT);
         input_report_rel(dev, INPUT_REL_Y, (int)fy, true, K_NO_WAIT);
     }
 
-    last_scroll_mode_active = scroll_mode_active;
     last_arrow_key_pressed = arrow_key_pressed;
     data->last_packet_time = now;
     k_msleep(4);
