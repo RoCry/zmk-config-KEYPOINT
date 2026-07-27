@@ -75,14 +75,15 @@ int kp3_shim_write(void *deck, const uint8_t *data, uint16_t len, int64_t now_ms
     return 0;
 }
 
-void kp3_shim_snapshot(const void *deck, int64_t now_ms, int *icon, int *led_hint, int *has_data,
-                       int *stale, int *generation, int *view_index, int *total_pages,
-                       char *lines_out) {
+void kp3_shim_snapshot(const void *deck, int64_t now_ms, int *icon, int *led_hint, int *attention,
+                       int *has_data, int *stale, int *generation, int *view_index,
+                       int *total_pages, char *lines_out) {
     const struct keypoint_live_data_snapshot snapshot = keypoint_live_data_core_snapshot(
         (const struct keypoint_live_data_deck *)deck, now_ms);
 
     *icon = (int)snapshot.icon;
     *led_hint = (int)snapshot.led_hint;
+    *attention = (int)snapshot.attention;
     *has_data = snapshot.has_data ? 1 : 0;
     *stale = snapshot.stale ? 1 : 0;
     *generation = snapshot.generation;

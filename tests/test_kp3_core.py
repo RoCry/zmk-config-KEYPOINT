@@ -14,6 +14,8 @@ fields is what keeps them honest.
 from __future__ import annotations
 
 import ctypes
+import random
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,6 +27,23 @@ ROOT = Path(__file__).resolve().parents[1]
 WIDGETS = ROOT / "config/boards/shields/lpm_view/widgets"
 SHIM = Path(__file__).resolve().parent / "kp3_core_shim.c"
 CORE = WIDGETS / "live_data_core.c"
+
+
+def _attention_levels() -> tuple[str, ...]:
+    """Attention levels, in enum order, read from the firmware header.
+
+    Deliberately not in kp3: attention is the firmware's LED semantic, not
+    part of the KP3 wire grammar, so it has no business in the wire contract.
+    """
+    header = (WIDGETS / "live_data.h").read_text()
+    block = re.search(r"enum keypoint_live_data_attention\s*\{(.*?)\};", header, re.S)
+    assert block is not None, "enum keypoint_live_data_attention not found"
+    levels = tuple(dict.fromkeys(re.findall(r"KEYPOINT_LIVE_DATA_ATTENTION_([A-Z_]+)", block.group(1))))
+    assert levels, "no attention levels parsed"
+    return levels
+
+
+ATTENTION_LEVELS = _attention_levels()
 
 
 @pytest.fixture(scope="session")
@@ -97,13 +116,14 @@ class Deck:
         return committed
 
     def snapshot(self, now_ms: int = 0) -> dict[str, object]:
-        out = [ctypes.c_int() for _ in range(7)]
+        out = [ctypes.c_int() for _ in range(8)]
         raw = ctypes.create_string_buffer(self._line_count * self._stride)
         self._lib.kp3_shim_snapshot(self._buffer, ctypes.c_int64(now_ms), *(ctypes.byref(value) for value in out), raw)
-        icon, led_hint, has_data, stale, generation, view_index, total_pages = (value.value for value in out)
+        icon, led_hint, attention, has_data, stale, generation, view_index, total_pages = (value.value for value in out)
         return {
             "icon": kp3.ICON_NAMES[icon],
             "led_hint": led_hint,
+            "attention": ATTENTION_LEVELS[attention],
             "has_data": bool(has_data),
             "stale": bool(stale),
             "generation": generation,
@@ -218,6 +238,45 @@ def test_the_corpus_covers_both_verdicts() -> None:
     accepted = sum(1 for frame in CORPUS if _accepts(frame))
     assert accepted >= 10
     assert len(CORPUS) - accepted >= 20
+
+
+_FUZZ_FIELDS = ("", "A0", "a0", "0", "9", "SUN", "CLAUDE", "MOON", "4", "5", "Z" * 9, "Z" * 10, "AB")
+_FUZZ_BYTES = tuple(chr(code) for code in range(0x20, 0x7F)) + ("\x00", "\x01", "\x7f", "|", "\xff")
+
+
+def _random_frame(rng: random.Random) -> str:
+    """Three shapes: structured garbage, a near-valid frame with one field
+    mutated (where the interesting disagreements live), and raw byte soup."""
+    match rng.randrange(3):
+        case 0:
+            fields = [rng.choice(_FUZZ_FIELDS) for _ in range(rng.randrange(8, 14))]
+            prefix = kp3.PREFIX if rng.random() < 0.9 else "KP2|"
+            return prefix + "|".join(fields)
+        case 1:
+            fields = ["A0", "0", "1", "SUN", "0", *(f"L{i}" for i in range(kp3.TEXT_LINE_COUNT))]
+            fields[rng.randrange(len(fields))] = rng.choice(_FUZZ_FIELDS)
+            return kp3.PREFIX + "|".join(fields)
+        case _:
+            return "".join(rng.choice(_FUZZ_BYTES) for _ in range(rng.randrange(0, 90)))
+
+
+def test_the_parsers_agree_on_random_frames(deck: Deck) -> None:
+    """The hand-written corpus only covers what someone thought to list.
+
+    Seeded, so a failure is reproducible; the seed is fixed rather than
+    time-based so CI cannot go red on a frame nobody can regenerate.
+    """
+    rng = random.Random(20260727)
+    for _ in range(5_000):
+        frame = _random_frame(rng)
+        ret, c_frame = deck.parse(frame)
+        try:
+            expected = kp3.parse(frame)
+        except kp3.FrameError:
+            assert ret < 0, f"C core accepted a frame kp3 rejects: {frame!r}"
+            continue
+        assert ret == 0, f"C core rejected a frame kp3 accepts: {frame!r}"
+        assert c_frame == expected, f"parsed fields differ for {frame!r}"
 
 
 def _accepts(frame: str) -> bool:
@@ -362,6 +421,70 @@ def test_an_empty_deck_reports_the_no_data_card(deck: Deck) -> None:
     assert snapshot["lines"][0] == "NO DATA"
     assert snapshot["lines"][1] == "WAITING"
     assert snapshot["total_pages"] == 1, "the page rail needs a deck size even when empty"
+
+
+def test_stale_data_keeps_its_text(deck: Deck) -> None:
+    """1-bit rendering cannot dim, so stale cards stay readable and the health
+    strip carries the signal. Losing the text would be a silent regression."""
+    deck.accept(card(0, 1, generation=0x51, text="KEEP"), now_ms=0)
+    stale = deck.snapshot(now_ms=kp3.STALE_MS)
+
+    assert stale["stale"] is True
+    assert stale["has_data"] is True
+    assert stale["lines"][0] == kp3.title("KEEP")
+
+
+# ---------------------------------------------------------------------------
+# Attention level: the one LED semantic, folded here so the LED driver
+# needs no opinion about icons or staleness
+# ---------------------------------------------------------------------------
+
+
+def attention_for(deck: Deck, *, icon: str, led_hint: int, stale: bool = False) -> str:
+    deck.accept(kp3.build_frame(icon, kp3.title("X"), generation=0x60, led_hint=led_hint), now_ms=0)
+    return str(deck.snapshot(now_ms=kp3.STALE_MS if stale else 0)["attention"])
+
+
+@pytest.mark.parametrize(
+    ("led_hint", "expected"),
+    [(1, "ACTIVE"), (2, "ATTENTION"), (3, "WARNING"), (4, "ERROR")],
+)
+def test_an_explicit_led_hint_wins(deck: Deck, led_hint: int, expected: str) -> None:
+    assert attention_for(deck, icon="SUN", led_hint=led_hint) == expected
+
+
+@pytest.mark.parametrize(
+    ("icon", "expected"),
+    [
+        ("CLAUDE", "HEARTBEAT_SINGLE"),
+        ("CODEX", "HEARTBEAT_DOUBLE"),
+        ("WARN", "CAUTION"),
+        ("SUN", "IDLE"),
+        ("NONE", "IDLE"),
+    ],
+)
+def test_an_unhinted_card_falls_back_to_what_its_icon_says(deck: Deck, icon: str, expected: str) -> None:
+    assert attention_for(deck, icon=icon, led_hint=0) == expected
+
+
+def test_staleness_outranks_both_hint_and_icon(deck: Deck) -> None:
+    assert attention_for(deck, icon="CLAUDE", led_hint=4, stale=True) == "STALE"
+
+
+def test_an_empty_deck_reports_no_data_attention(deck: Deck) -> None:
+    assert deck.snapshot()["attention"] == "NO_DATA"
+
+
+def test_every_attention_level_is_distinct(deck: Deck) -> None:
+    """Each level is a distinct blink pattern on the device; two folding to one
+    is a silent regression the LED driver cannot detect."""
+    reached = {
+        deck.snapshot()["attention"],
+        attention_for(deck, icon="CLAUDE", led_hint=0, stale=True),
+        *(attention_for(deck, icon="SUN", led_hint=code) for code in kp3.LED_CODES if code),
+        *(attention_for(deck, icon=icon, led_hint=0) for icon in ("CLAUDE", "CODEX", "WARN", "SUN")),
+    }
+    assert reached == set(ATTENTION_LEVELS), f"unreachable levels: {set(ATTENTION_LEVELS) - reached}"
 
 
 def test_a_rejected_frame_leaves_the_deck_untouched(deck: Deck) -> None:

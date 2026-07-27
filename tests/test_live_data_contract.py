@@ -1,3 +1,18 @@
+"""Wiring and structure pins for the firmware tree.
+
+What belongs here: things only a build can express -- CMake targets, Kconfig
+symbols, keymap bindings, Zephyr listener and work-queue registration, BLE
+UUIDs, module boundaries -- asserted by reading the source, because there is
+no way to execute them on a host.
+
+What does NOT belong here: behaviour. Reading C source to pin what the code
+*does* fixes its spelling, not its meaning, and it passes just as happily
+when the behaviour is wrong. Deck staging, parsing, staleness and attention
+folding are executed in `test_kp3_core.py` against the compiled core; the
+wire contract is executed in `test_kp3_contract.py` against kp3. Put new
+behaviour tests there.
+"""
+
 import ast
 import importlib.util
 import random
@@ -92,38 +107,6 @@ def test_bootloader_shortcuts_are_on_requested_layer_positions() -> None:
     assert symbol_bindings[52] == "&bootloader"
 
 
-def test_live_data_firmware_contract_constants() -> None:
-    text = LIVE_DATA_H.read_text()
-
-    assert "#define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 6" in text
-    assert "#define KEYPOINT_LIVE_DATA_LINE_MAX 9" in text
-    assert "#define KEYPOINT_LIVE_DATA_ICON_MAX 8" in text
-    assert "#define KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX 2" in text
-    assert "#define KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX 1" in text
-    assert "#define KEYPOINT_LIVE_DATA_STALE_MS 360000" in text
-    assert '#define KEYPOINT_LIVE_DATA_PREFIX "KP3|"' in text
-
-
-def test_live_data_deck_contract_constants() -> None:
-    text = LIVE_DATA_H.read_text()
-
-    assert "#define KEYPOINT_LIVE_DATA_PAGE_MAX 8" in text
-    assert "#define KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX 1" in text
-    # Frame-max macro carries GEN, IDX/TOTAL plus the LED hint and their separators.
-    assert "(KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX + 1)" in text
-    assert "((KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX + 1) * 2)" in text
-    assert "(KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX + 1)" in text
-    # Snapshot exposes the current page + deck size for the indicator.
-    assert "uint8_t view_index;" in text
-    assert "uint8_t total_pages;" in text
-    assert "uint8_t generation;" in text
-    assert "enum keypoint_live_data_led_hint led_hint;" in text
-    # Parse signature yields generation/idx/total/icon/led_hint.
-    assert "uint8_t *generation" in text
-    assert "uint8_t *idx, uint8_t *total" in text
-    assert "enum keypoint_live_data_led_hint *led_hint" in text
-
-
 def test_trackpad_led_renders_attention_levels_and_nothing_else() -> None:
     text = TRACKPAD_LED_C.read_text()
 
@@ -186,34 +169,6 @@ def test_live_data_seam_is_one_way() -> None:
     assert "keypoint_live_data_subscribe(live_data_changed)" in status
 
 
-def test_attention_level_is_folded_by_the_pure_core() -> None:
-    header = LIVE_DATA_H.read_text()
-    core = LIVE_DATA_CORE_C.read_text()
-
-    assert "enum keypoint_live_data_attention attention;" in header
-    # Every level is a distinct blink pattern on the device; merging two is a
-    # silent regression, so the enum spells all of them out.
-    for level in (
-        "IDLE",
-        "NO_DATA",
-        "HEARTBEAT_SINGLE",
-        "HEARTBEAT_DOUBLE",
-        "ACTIVE",
-        "CAUTION",
-        "ATTENTION",
-        "WARNING",
-        "STALE",
-        "ERROR",
-    ):
-        assert f"KEYPOINT_LIVE_DATA_ATTENTION_{level}" in header
-
-    # Folded in the host-testable core -- pure math over hint, staleness, icon.
-    assert "snapshot.attention = attention_for(&snapshot);" in core
-    assert "KEYPOINT_LIVE_DATA_ICON_CLAUDE" in core
-    assert "KEYPOINT_LIVE_DATA_ICON_CODEX" in core
-    assert "KEYPOINT_LIVE_DATA_ICON_WARN" in core
-
-
 def test_live_data_page_navigation_listener() -> None:
     text = LIVE_DATA_C.read_text()
     core = LIVE_DATA_CORE_C.read_text()
@@ -226,18 +181,6 @@ def test_live_data_page_navigation_listener() -> None:
     assert "ZMK_SUBSCRIPTION(keypoint_live_data_page_keys, zmk_position_state_changed)" in text
     # Wrap-around page advance over the deck, computed by the pure core.
     assert "(deck->view_index + deck->total + delta) % deck->total" in core
-
-
-def test_live_data_uses_generation_staged_deck_commit() -> None:
-    text = LIVE_DATA_CORE_C.read_text()
-    header = LIVE_DATA_CORE_H.read_text()
-
-    assert "pending_cards[KEYPOINT_LIVE_DATA_PAGE_MAX]" in header
-    assert "pending_generation" in text
-    assert "pending_mask" in text
-    assert "received_mask_for_total(deck->pending_total)" in text
-    assert "memcpy(deck->cards, deck->pending_cards, sizeof(deck->cards));" in text
-    assert "deck->generation = deck->pending_generation;" in text
 
 
 def test_live_data_core_is_free_of_zephyr_and_globals() -> None:
@@ -558,13 +501,12 @@ def test_live_data_icon_does_not_reduce_text_width() -> None:
     assert "KEYPOINT_LIVE_ICON_Y" in text
 
 
-def test_live_data_kp3_icon_contract_is_explicit() -> None:
-    header = LIVE_DATA_H.read_text()
+def test_every_accepted_icon_reaches_the_renderer() -> None:
+    """Which icons exist is kp3's business (it derives them and cross-checks
+    the enum against the acceptance chain). What this pins is the wiring: the
+    parser resolves an icon and the status widget draws one."""
     firmware = LIVE_DATA_CORE_C.read_text()
     status = STATUS_C.read_text()
-
-    for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
-        assert f"KEYPOINT_LIVE_DATA_ICON_{icon}" in header
 
     assert "enum keypoint_live_data_icon *icon" in firmware
     assert "icon_from_field(" in firmware
@@ -589,15 +531,6 @@ def test_codex_icon_uses_openai_mark_inspired_bitmap() -> None:
         "};"
     )
     assert old_x_bitmap not in status
-
-
-def test_live_data_stale_keeps_last_payload_text() -> None:
-    text = LIVE_DATA_C.read_text()
-    core = LIVE_DATA_CORE_C.read_text()
-
-    assert '"STALE"' not in text
-    assert '"STALE"' not in core
-    assert "snapshot.stale" in core
 
 
 def test_demo_sender_declares_no_contract_of_its_own() -> None:
