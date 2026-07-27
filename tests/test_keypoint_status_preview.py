@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 from pathlib import Path
 
+import kp3
 import pytest
 from PIL import Image
 
@@ -51,8 +52,6 @@ def glass_y_middle(row: int) -> int:
 def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         output_dir = Path(tmp)
-        for stale_name in preview.STALE_PREVIEW_FILES:
-            (output_dir / stale_name).write_bytes(b"stale")
 
         written = preview.write_preview_set(output_dir, scale=2)
 
@@ -66,6 +65,22 @@ def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
                 assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
 
 
+def test_write_preview_set_regenerates_the_whole_directory() -> None:
+    # Output from a renamed or deleted demo case must not survive a rerun --
+    # the directory is regenerated, not incrementally pruned by name.
+    with tempfile.TemporaryDirectory() as tmp:
+        output_dir = Path(tmp)
+        (output_dir / "left_screen_renamed_case.png").write_bytes(b"stale")
+        (output_dir / "status_contact_sheet.png").write_bytes(b"stale")
+        keep = output_dir / "notes.txt"
+        keep.write_text("not mine to delete")
+
+        written = preview.write_preview_set(output_dir, scale=2)
+
+        assert {path.name for path in output_dir.glob("*.png")} == {path.name for path in written}
+        assert keep.read_text() == "not mine to delete"
+
+
 def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         output = Path(tmp) / "frame.png"
@@ -77,65 +92,22 @@ def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
             preview.write_frame_preview("KP2|SUN|TOO|FEW|FIELDS", Path(tmp) / "bad.png")
 
 
-def test_parse_live_frame_accepts_firmware_contract() -> None:
-    assert preview.parse_live_frame(FRESH_FRAME) == (
-        0xA0,
-        0,
-        1,
-        "SUN",
-        0,
-        ("SUNNY", "TMP 24C", "12:00", "UV 5", "HUM 40%", "AQI 42"),
-    )
-    assert preview.parse_live_frame("KP3|0F|0|1|NONE|0||||||") == (0x0F, 0, 1, "NONE", 0, ("",) * 6)
-    assert preview.parse_live_frame("KP3|FF|2|5|CLAUDE|2|MAX8CHAR|ABCDEFGH|12345678|IJKLMNOP|87654321|QRSTUVWX") == (
-        0xFF,
-        2,
-        5,
-        "CLAUDE",
-        2,
-        ("MAX8CHAR", "ABCDEFGH", "12345678", "IJKLMNOP", "87654321", "QRSTUVWX"),
-    )
+def test_snapshot_carries_the_parsed_frame_including_deck_position() -> None:
+    # The grammar itself is kp3's to police (tests/test_kp3_contract.py); what
+    # the preview owns is handing kp3's Frame to the renderer intact.
+    snapshot = preview.live_data_snapshot("KP3|A1|1|3|CLAUDE|2|CLAUDE   |5H    76%|14:30|||")
+    assert (snapshot.generation, snapshot.view_index, snapshot.total_pages) == (0xA1, 1, 3)
+    assert (snapshot.icon, snapshot.led_hint) == ("CLAUDE", 2)
+    assert snapshot.lines[0] == "CLAUDE   "
+    assert snapshot.has_data and not snapshot.stale
 
 
-def test_parse_live_frame_returns_idx_and_total() -> None:
-    generation, idx, total, icon, led_hint, lines = preview.parse_live_frame(
-        "KP3|A1|1|3|CLAUDE|2|CLAUDE  |5H   76%|14:30|||"
-    )
-    assert (generation, idx, total, icon, led_hint) == (0xA1, 1, 3, "CLAUDE", 2)
-    assert lines[0] == "CLAUDE  "
-
-
-def test_live_frame_max_grew_for_led_hint() -> None:
-    # 6 text lines * 9 chars (LINE_MAX) + separators, GEN/IDX/TOTAL/ICON/LED.
-    assert preview.LIVE_FRAME_MAX == 81
-
-
-@pytest.mark.parametrize(
-    "frame",
-    [
-        "KP2|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # old prefix is not accepted
-        "KP3|A|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be exactly two hex digits
-        "KP3|a0|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be uppercase hex
-        "KP3|GG|0|1|SUN|0|SUNNY|TMP 24C|12:00|||",  # GEN must be hex
-        "KP3|A0|0|1|SUN|0|SUNNY|TMP 24C|12:00",  # legacy 3-line frame: too few fields
-        "KP3|A0|0|1|SUN|0|A|B|C|D|E|F|G",  # too many fields
-        "KP3|A0|0|1|SUN|0|TENCHARS10|TMP 24C|12:00|||",  # line longer than LINE_MAX
-        "KP3|A0|0|1|SUN|0|SUNNÝ|TMP 24C|12:00|||",  # non-printable-ascii byte
-        "KP3|A0|0|1|MOON|0|A|B|C|D|E|",  # icon unknown to icon_from_field()
-        "KP3|SUN|SUNNY|TMP 24C|12:00|UV 5|HUM 40%|AQI 42",  # legacy frame: no GEN/IDX/TOTAL
-        "KP3|A0|3|3|SUN|0|A|B|C|D|E|",  # idx must be < total
-        "KP3|A0|0|0|SUN|0|A|B|C|D|E|",  # total must be >= 1
-        "KP3|A0|x|1|SUN|0|A|B|C|D|E|",  # non-digit IDX
-        "KP3|A0||1|SUN|0|A|B|C|D|E|",  # empty IDX field
-        "KP3|A0|0||SUN|0|A|B|C|D|E|",  # empty TOTAL field
-        "KP3|A0|0|1|SUN||A|B|C|D|E|",  # empty LED hint
-        "KP3|A0|0|1|SUN|5|A|B|C|D|E|",  # unsupported LED hint
-        "KP3|A0|0|1|SUN|00|A|B|C|D|E|",  # LED hint must be one digit
-    ],
-)
-def test_parse_live_frame_rejects_what_firmware_rejects(frame: str) -> None:
-    with pytest.raises(ValueError):
-        preview.parse_live_frame(frame)
+def test_every_contract_icon_can_be_drawn() -> None:
+    # Bitmaps are the preview's own concern, but the icon set is the contract's:
+    # an icon the wire accepts with no bitmap would render as a blank corner.
+    assert set(kp3.ICON_NAMES) - {"NONE"} <= set(preview.ICONS)
+    for icon in kp3.ICON_NAMES:
+        preview.draw_top(STATE, preview.live_data_snapshot(kp3.build_frame(icon, "X")))
 
 
 def test_no_data_snapshot_matches_firmware_fallback() -> None:
@@ -151,20 +123,20 @@ def test_no_data_renders_centered_tip_not_live_grid() -> None:
     snapshot = preview.live_data_snapshot(None)
     top = preview.draw_top(STATE, snapshot).image
     middle = preview.draw_middle(STATE, snapshot).image
-    width = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    width = preview.LAYOUT.live_text_width
 
     # No inverted title bar: the bar's top row stays the background colour.
-    assert top.getpixel((1, preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"])) == preview.WHITE
+    assert top.getpixel((1, preview.LAYOUT.live_title_bar_y)) == preview.WHITE
 
     # The hint is centred: both side gutters stay empty, the middle has ink.
-    tip_y = preview.LAYOUT["KEYPOINT_LIVE_TIP_Y"]
+    tip_y = preview.LAYOUT.live_tip_y
     assert min(top.crop((0, tip_y, 8, tip_y + 9)).tobytes()) == preview.WHITE
     assert min(top.crop((width - 8, tip_y, width, tip_y + 9)).tobytes()) == preview.WHITE
     assert preview.BLACK in set(top.crop((8, tip_y, width - 8, tip_y + 9)).tobytes())
 
     # No health strip while there is no data.
-    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
-    health_h = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
+    health_y = preview.LAYOUT.live_health_y
+    health_h = preview.LAYOUT.live_health_height
     assert min(middle.crop((0, health_y, width, health_y + health_h)).tobytes()) == preview.WHITE
 
 
@@ -173,13 +145,13 @@ def test_live_lines_split_between_top_and_middle_canvas() -> None:
     top = preview.draw_top(STATE, snapshot).image
     middle = preview.draw_middle(STATE, snapshot).image
 
-    line_h = preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
-    top_band = (0, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"], 70, preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + 3 * line_h)
+    line_h = preview.LAYOUT.live_text_line_height
+    top_band = (0, preview.LAYOUT.live_text_y, 70, preview.LAYOUT.live_text_y + 3 * line_h)
     extra_band = (
         0,
-        preview.LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"],
+        preview.LAYOUT.live_extra_text_y,
         70,
-        preview.LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"] + 3 * line_h,
+        preview.LAYOUT.live_extra_text_y + 3 * line_h,
     )
     assert min(top.crop(top_band).tobytes()) == preview.BLACK
     assert min(middle.crop(extra_band).tobytes()) == preview.BLACK
@@ -196,7 +168,7 @@ def test_stale_data_stays_readable_with_segmented_health_strip() -> None:
         == preview.draw_top(STATE, fresh_snapshot).image.tobytes()
     )
 
-    health_y = preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
+    health_y = preview.LAYOUT.live_health_y
     fresh = preview.draw_middle(STATE, fresh_snapshot).image
     stale = preview.draw_middle(STATE, stale_snapshot).image
     assert fresh.getpixel((2, health_y)) == preview.BLACK
@@ -207,7 +179,7 @@ def test_stale_data_stays_readable_with_segmented_health_strip() -> None:
 
 def test_health_strip_is_visible_on_glass() -> None:
     glass = preview.render_left_screen(STATE, FRESH_FRAME)
-    health_row = glass_y_middle(preview.LAYOUT["KEYPOINT_LIVE_HEALTH_Y"])
+    health_row = glass_y_middle(preview.LAYOUT.live_health_y)
     assert glass.getpixel((glass_x(2), health_row)) == preview.BLACK
     assert glass.getpixel((glass_x(60), health_row)) == preview.BLACK
 
@@ -217,7 +189,7 @@ def test_live_text_is_right_aligned_like_firmware() -> None:
     # Third line "12:00" is 40px wide, right-aligned in the full-width 72px
     # column at x=0: ink starts at x=32, so the left side of its band stays
     # empty (a bare value with no label hugs the right frame).
-    line_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + 2 * preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+    line_y = preview.LAYOUT.live_text_y + 2 * preview.LAYOUT.live_text_line_height
     band = (0, line_y, 70, line_y + 9)
     left_band = (0, line_y, 30, line_y + 9)
     assert min(canvas.crop(band).tobytes()) == preview.BLACK
@@ -228,9 +200,9 @@ def test_title_line_renders_inverted_bar() -> None:
     # The card title (live line 0) is a filled foreground bar with the title
     # text knocked out in the background colour (the active-profile styling).
     canvas = preview.draw_top(STATE, preview.live_data_snapshot(FRESH_FRAME)).image
-    width = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
-    bar_y = preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"]
-    bar_h = preview.LAYOUT["KEYPOINT_LIVE_TITLE_BAR_HEIGHT"]
+    width = preview.LAYOUT.live_text_width
+    bar_y = preview.LAYOUT.live_title_bar_y
+    bar_h = preview.LAYOUT.live_title_bar_height
 
     # The bar's top row (above the glyphs) is solid foreground across the full
     # width: a regular line leaves this region the white background instead.
@@ -247,7 +219,7 @@ def test_title_line_renders_inverted_bar() -> None:
     assert abs(whites[0] - (width - 1 - whites[-1])) <= 2
 
     # A non-title line stays normal: white background in its empty left gutter.
-    line1_y = preview.LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + preview.LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+    line1_y = preview.LAYOUT.live_text_y + preview.LAYOUT.live_text_line_height
     assert canvas.getpixel((1, line1_y + 4)) == preview.WHITE
 
 
@@ -256,10 +228,10 @@ def _top(frame: str):
 
 
 def test_page_rail_only_renders_for_multipage_deck() -> None:
-    page_y = preview.LAYOUT["KEYPOINT_LIVE_PAGE_Y"]
-    thumb_h = preview.LAYOUT["KEYPOINT_LIVE_PAGE_THUMB_HEIGHT"]
-    rail_x = preview.LAYOUT["KEYPOINT_LIVE_TEXT_X"]
-    rail_w = preview.LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    page_y = preview.LAYOUT.live_page_y
+    thumb_h = preview.LAYOUT.live_page_thumb_height
+    rail_x = preview.LAYOUT.live_text_x
+    rail_w = preview.LAYOUT.live_text_width
     thumb_top = page_y - thumb_h // 2
 
     # A single-page deck shows no indicator at all: the band stays blank.
@@ -307,10 +279,10 @@ def test_glass_orientation_battery_top_profiles_bottom() -> None:
     # Battery shell outline pixel: logical top canvas (0, 2).
     assert glass.getpixel((glass_x(0), glass_y_top(2))) == preview.BLACK
     # Active profile slot fill: logical middle canvas (2, KEYPOINT_PROFILE_ROW_Y).
-    row_y = preview.LAYOUT["KEYPOINT_PROFILE_ROW_Y"]
+    row_y = preview.LAYOUT.profile_row_y
     assert glass.getpixel((glass_x(2), glass_y_middle(row_y))) == preview.BLACK
     # Layer text band near the glass bottom has ink.
-    layer_band = (0, glass_y_middle(preview.LAYOUT["KEYPOINT_LAYER_TEXT_Y"]), 72, 144)
+    layer_band = (0, glass_y_middle(preview.LAYOUT.layer_text_y), 72, 144)
     assert min(glass.crop(layer_band).tobytes()) == preview.BLACK
 
 

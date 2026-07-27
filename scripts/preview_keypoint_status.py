@@ -21,19 +21,24 @@ Simulates the firmware rendering pipeline instead of approximating it:
        image (top block: battery/output/live lines 1-3/icon, bottom block:
        live lines 4-6, health strip, profiles + layer).
 
-Icon bitmaps, layout constants and the KP3 live-data contract are parsed
-from the firmware sources so the preview cannot drift from them. The LVGL
+Icon bitmaps and layout constants are parsed from the firmware sources so
+the preview cannot drift from them; the KP3 contract (grammar, parser, card
+builders) comes from kp3.py, which derives it the same way. The LVGL
 renderer behavior lives in keypoint_lvgl_sim.py; exact font glyph tables in
-keypoint_lvgl_fonts.py. RT cases feed demo KP3 frames through the same
-parser the firmware uses for the BLE GATT write.
+keypoint_lvgl_fonts.py. Demo cases feed KP3 frames built by kp3 through the
+same parser the firmware uses for the BLE GATT write.
 
 Producers: the KP3 wire protocol and line-layout conventions are documented
-in send_keypoint_live_demo.py. To check a candidate frame visually, run
+in kp3.py. To check a candidate frame visually, run
   uv run scripts/preview_keypoint_status.py --frame 'KP3|A0|0|1|SUN|0|...'
 which validates it like the firmware would and renders the resulting glass.
+
+--output-dir belongs to the preview: `write_preview_set()` regenerates it,
+dropping any PNG left there by an earlier (or renamed) demo set.
 """
 
 import argparse
+import dataclasses
 import re
 import sys
 from dataclasses import dataclass
@@ -46,6 +51,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+import kp3  # noqa: E402
 from keypoint_lvgl_sim import (  # noqa: E402
     BLACK,
     FONT_MONTSERRAT_16,
@@ -75,7 +81,7 @@ Transport = Literal["usb", "ble"]
 
 
 # ---------------------------------------------------------------------------
-# Firmware source parsing (single source of truth for layout + contract)
+# Firmware source parsing (single source of truth for the screen geometry)
 # ---------------------------------------------------------------------------
 
 
@@ -83,25 +89,79 @@ def _read_widget_source(name: str) -> str:
     return (WIDGETS_DIR / name).read_text()
 
 
-def _parse_layout_defines() -> dict[str, int]:
+@dataclass(frozen=True, slots=True)
+class Layout:
+    """Status-screen geometry, read out of status_layout.h and util.h.
+
+    Every field is one `#define` with the `KEYPOINT_` prefix dropped and the
+    name lowercased. Declaring them makes the set the preview depends on
+    explicit: a define the firmware renames or removes fails the import
+    instead of silently rendering at the wrong coordinates.
+    """
+
+    canvas_size: int
+    status_profile_count: int
+
+    live_icon_size: int
+    live_icon_scale: int
+    live_icon_x: int
+    live_icon_y: int
+
+    live_text_x: int
+    live_text_y: int
+    live_text_width: int
+    live_text_line_height: int
+
+    live_title_bar_y: int
+    live_title_bar_height: int
+    live_tip_y: int
+
+    live_page_y: int
+    live_page_thumb_height: int
+
+    live_top_line_count: int
+    live_extra_text_y: int
+    live_health_x: int
+    live_health_y: int
+    live_health_width: int
+    live_health_height: int
+
+    live_bar_margin_y: int
+    live_bar_height: int
+    live_bar_border: int
+
+    profile_slot_width: int
+    profile_slot_height: int
+    profile_corner_size: int
+    profile_mark_size: int
+    profile_mark_x_offset: int
+    profile_mark_y_offset: int
+    profile_row_y: int
+
+    layer_text_x: int
+    layer_text_y: int
+    layer_text_width: int
+
+
+def _parse_layout() -> Layout:
     defines: dict[str, int] = {}
     for source_name in ("status_layout.h", "util.h"):
         for name, value in re.findall(r"#define\s+(\w+)\s+(-?\d+)\s*$", _read_widget_source(source_name), re.M):
-            defines[name] = int(value)
-    for required in ("CANVAS_SIZE", "KEYPOINT_LIVE_ICON_SIZE", "KEYPOINT_PROFILE_ROW_Y"):
-        if required not in defines:
-            raise ValueError(f"missing #define {required} in widget headers")
-    return defines
+            defines[name.removeprefix("KEYPOINT_").lower()] = int(value)
+    names = [field.name for field in dataclasses.fields(Layout)]
+    if missing := [name for name in names if name not in defines]:
+        raise ValueError(f"missing #define(s) in widget headers: {missing}")
+    return Layout(**{name: defines[name] for name in names})
 
 
-LAYOUT = _parse_layout_defines()
-CANVAS_SIZE = LAYOUT["CANVAS_SIZE"]
-PROFILE_COUNT = LAYOUT["KEYPOINT_STATUS_PROFILE_COUNT"]
+LAYOUT = _parse_layout()
+CANVAS_SIZE = LAYOUT.canvas_size
+PROFILE_COUNT = LAYOUT.status_profile_count
 
 
 def _parse_icon_bitmaps() -> dict[str, tuple[str, ...]]:
     source = _read_widget_source("status_layout.h")
-    size = LAYOUT["KEYPOINT_LIVE_ICON_SIZE"]
+    size = LAYOUT.live_icon_size
     icons: dict[str, tuple[str, ...]] = {}
     for match in re.finditer(r"static const char icon_(\w+)\[[^]]*\]\[[^]]*\]\s*=\s*\{(.*?)\};", source, re.S):
         rows = tuple(re.findall(r'"([01]+)"', match.group(2)))
@@ -116,59 +176,22 @@ def _parse_icon_bitmaps() -> dict[str, tuple[str, ...]]:
 ICONS = _parse_icon_bitmaps()
 
 
-def _parse_icon_names() -> tuple[str, ...]:
-    """Icon identifiers accepted by enum keypoint_live_data_icon."""
-    source = _read_widget_source("live_data.h")
-    block_match = re.search(r"enum keypoint_live_data_icon\s*\{(.*?)\};", source, re.S)
-    if block_match is None:
-        raise ValueError("enum keypoint_live_data_icon not found")
-    names = tuple(dict.fromkeys(re.findall(r"KEYPOINT_LIVE_DATA_ICON_([A-Z]+)", block_match.group(1))))
-    if "NONE" not in names:
-        raise ValueError("keypoint_live_data_icon parse failed")
-    missing = [name for name in names if name != "NONE" and name not in ICONS]
+def _require_icon_bitmaps() -> None:
+    """Bitmaps are a preview concern, but the icon set is the contract's:
+    anything kp3 accepts on the wire must be drawable here."""
+    missing = [name for name in kp3.ICON_NAMES if name != "NONE" and name not in ICONS]
     if missing:
-        raise ValueError(f"icons accepted by live_data.c without bitmaps: {missing}")
-    return names
+        raise ValueError(f"icons accepted by the KP3 contract without a bitmap in status_layout.h: {missing}")
 
 
-ICON_NAMES = _parse_icon_names()
+_require_icon_bitmaps()
 
 
-def _parse_live_data_contract() -> tuple[str, int, int, int, int, int]:
-    source = _read_widget_source("live_data.h")
-    prefix_match = re.search(r'#define KEYPOINT_LIVE_DATA_PREFIX "([^"]+)"', source)
-    if prefix_match is None:
-        raise ValueError("KEYPOINT_LIVE_DATA_PREFIX not found")
-    values = {name: int(value) for name, value in re.findall(r"#define KEYPOINT_LIVE_DATA_(\w+) (\d+)", source)}
-    return (
-        prefix_match.group(1),
-        values["GENERATION_FIELD_MAX"],
-        values["ICON_MAX"],
-        values["LED_HINT_FIELD_MAX"],
-        values["TEXT_LINE_COUNT"],
-        values["LINE_MAX"],
-    )
-
-
-(
-    LIVE_PREFIX,
-    LIVE_GENERATION_FIELD_MAX,
-    LIVE_ICON_MAX,
-    LIVE_LED_HINT_FIELD_MAX,
-    LIVE_LINE_COUNT,
-    LIVE_LINE_MAX,
-) = _parse_live_data_contract()
-# GEN + two single-digit page fields precede ICON; one single-digit LED hint follows it.
-LIVE_PAGE_FIELD_MAX = 1  # MAX_PAGES = 8 -> idx 0..7, total 1..8 (one digit)
-LIVE_FRAME_MAX = (
-    len(LIVE_PREFIX)
-    + (LIVE_GENERATION_FIELD_MAX + 1)
-    + (LIVE_PAGE_FIELD_MAX + 1) * 2
-    + (LIVE_LED_HINT_FIELD_MAX + 1)
-    + LIVE_ICON_MAX
-    + (LIVE_LINE_COUNT * LIVE_LINE_MAX)
-    + LIVE_LINE_COUNT
-)
+def _layout_coord(token: str) -> int:
+    """Resolve one entry of a C coordinate table: a literal or a layout macro."""
+    if token.lstrip("-").isdigit():
+        return int(token)
+    return getattr(LAYOUT, token.removeprefix("KEYPOINT_").lower())
 
 
 def _parse_profile_slot_origins() -> tuple[tuple[int, int], ...]:
@@ -176,9 +199,10 @@ def _parse_profile_slot_origins() -> tuple[tuple[int, int], ...]:
     block_match = re.search(r"slot_offsets\[[^]]*\]\[2\]\s*=\s*\{(.*?)\};", source, re.S)
     if block_match is None:
         raise ValueError("slot_offsets not found in status_info_panel.h")
-    origins = []
-    for x_text, y_text in re.findall(r"\{(\w+),\s*(\w+)\}", block_match.group(1)):
-        origins.append((LAYOUT.get(x_text) or int(x_text), LAYOUT[y_text]))
+    origins = [
+        (_layout_coord(x_text), _layout_coord(y_text))
+        for x_text, y_text in re.findall(r"\{(\w+),\s*(\w+)\}", block_match.group(1))
+    ]
     if len(origins) != PROFILE_COUNT:
         raise ValueError(f"expected {PROFILE_COUNT} profile slots, found {len(origins)}")
     return tuple(origins)
@@ -210,7 +234,7 @@ BOLT_IMAGE = _parse_bolt_image()
 
 
 # ---------------------------------------------------------------------------
-# Live data (live_data.c port)
+# Live data read model (live_data.c snapshot; the grammar lives in kp3)
 # ---------------------------------------------------------------------------
 
 
@@ -226,65 +250,25 @@ class LiveDataSnapshot:
     total_pages: int = 1
 
 
-def parse_live_frame(frame: str | bytes) -> tuple[int, int, int, str, int, tuple[str, ...]]:
-    """Port of keypoint_live_data_parse(); raises ValueError where the firmware
-    rejects the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED. Frame grammar:
-    KP3|GEN|IDX|TOTAL|ICON|LED|L1|..|L6."""
-    data = frame.encode() if isinstance(frame, str) else frame
-    if len(data) > LIVE_FRAME_MAX:
-        raise ValueError(f"frame longer than {LIVE_FRAME_MAX} bytes")
-    prefix = LIVE_PREFIX.encode()
-    if not data.startswith(prefix):
-        raise ValueError(f"frame must start with {LIVE_PREFIX!r}")
-
-    # Fields after the prefix:
-    # 0=GEN, 1=IDX, 2=TOTAL, 3=ICON, 4=LED, 5..(4+LINE_COUNT)=lines.
-    fields = data[len(prefix) :].split(b"|")
-    expected = 5 + LIVE_LINE_COUNT
-    if len(fields) != expected:
-        raise ValueError(f"expected {expected} fields, got {len(fields)}")
-
-    generation_field = fields[0].decode("latin-1")
-    if len(generation_field) != LIVE_GENERATION_FIELD_MAX or not all(
-        ch in "0123456789ABCDEF" for ch in generation_field
-    ):
-        raise ValueError(f"bad generation {generation_field!r}")
-    generation = int(generation_field, 16)
-
-    if not (fields[1].isdigit() and fields[2].isdigit()):
-        raise ValueError("IDX/TOTAL must be decimal digits")
-    if len(fields[1]) > LIVE_PAGE_FIELD_MAX or len(fields[2]) > LIVE_PAGE_FIELD_MAX:
-        raise ValueError("IDX/TOTAL exceed one digit")
-    idx, total = int(fields[1]), int(fields[2])
-    if total < 1 or not (0 <= idx < total):
-        raise ValueError(f"bad page idx={idx} total={total}")
-
-    icon_field = fields[3].decode("latin-1")
-    if len(icon_field) > LIVE_ICON_MAX or icon_field not in ICON_NAMES:
-        raise ValueError(f"unknown icon {icon_field!r}")
-
-    led_field = fields[4].decode("latin-1")
-    if len(led_field) != LIVE_LED_HINT_FIELD_MAX or led_field not in {"0", "1", "2", "3", "4"}:
-        raise ValueError(f"bad LED hint {led_field!r}")
-    led_hint = int(led_field)
-
-    lines = []
-    for raw in fields[5:]:
-        if len(raw) > LIVE_LINE_MAX or any(not (0x20 <= b <= 0x7E) for b in raw):
-            raise ValueError(f"bad line field {raw!r}")
-        lines.append(raw.decode("ascii"))
-    return generation, idx, total, icon_field, led_hint, tuple(lines)
-
-
 def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapshot:
     """keypoint_live_data_snapshot_get(): WARN/NO DATA before the first frame,
-    stale keeps the last payload (which 1-bit rendering then hides)."""
+    stale keeps the last payload (which 1-bit rendering then hides).
+
+    Frames go through kp3.parse(), so the preview refuses exactly what the
+    firmware's GATT write handler refuses."""
     if frame is None:
-        lines = ("NO DATA", "WAITING") + ("",) * (LIVE_LINE_COUNT - 2)
+        lines = ("NO DATA", "WAITING") + ("",) * (kp3.TEXT_LINE_COUNT - 2)
         return LiveDataSnapshot("WARN", 0, lines, has_data=False, stale=False)
-    generation, idx, total, icon, led_hint, lines = parse_live_frame(frame)
+    parsed = kp3.parse(frame)
     return LiveDataSnapshot(
-        icon, led_hint, lines, has_data=True, stale=stale, generation=generation, view_index=idx, total_pages=total
+        parsed.icon,
+        parsed.led_hint,
+        parsed.lines,
+        has_data=True,
+        stale=stale,
+        generation=parsed.generation,
+        view_index=parsed.index,
+        total_pages=parsed.total,
     )
 
 
@@ -337,14 +321,14 @@ def output_symbol(state: StatusState) -> str:
 def _draw_live_line(canvas: Canvas, line: str, y: int) -> None:
     """Render one live-data line. [NNN] tokens (bar encoding) draw a progress
     rectangle; all other lines draw right-aligned unscii-8 text."""
-    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
-    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
+    x = LAYOUT.live_text_x
+    w = LAYOUT.live_text_width
     if len(line) == 5 and line[0] == "[" and line[4] == "]" and line[1:4].isdigit():
         pct = int(line[1:4])
         if 0 <= pct <= 100:
-            bar_margin_y = LAYOUT["KEYPOINT_LIVE_BAR_MARGIN_Y"]
-            bar_h = LAYOUT["KEYPOINT_LIVE_BAR_HEIGHT"]
-            bar_border = LAYOUT["KEYPOINT_LIVE_BAR_BORDER"]
+            bar_margin_y = LAYOUT.live_bar_margin_y
+            bar_h = LAYOUT.live_bar_height
+            bar_border = LAYOUT.live_bar_border
             inner_w = w - 2 * bar_border
             fill_w = pct * inner_w // 100
             bar_y = y + bar_margin_y
@@ -363,22 +347,22 @@ def _draw_title_bar(canvas: Canvas, title: str) -> None:
     text = title.strip()
     if not text:
         return
-    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
-    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
-    canvas.fill_rect(x, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_Y"], w, LAYOUT["KEYPOINT_LIVE_TITLE_BAR_HEIGHT"], BLACK)
-    canvas.draw_text(x, LAYOUT["KEYPOINT_LIVE_TEXT_Y"], w, FONT_UNSCII_8, text, align="center", color=WHITE)
+    x = LAYOUT.live_text_x
+    w = LAYOUT.live_text_width
+    canvas.fill_rect(x, LAYOUT.live_title_bar_y, w, LAYOUT.live_title_bar_height, BLACK)
+    canvas.draw_text(x, LAYOUT.live_text_y, w, FONT_UNSCII_8, text, align="center", color=WHITE)
 
 
 def _draw_tip(canvas: Canvas, lines: tuple[str, ...]) -> None:
     """Port of draw_live_data_title()'s sibling draw_live_data_tip(): the
     no-data hint is plain centred text on the top canvas -- none of the
     live-data styling (no inverted title, columns, page rail or health strip)."""
-    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
-    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
-    for index, line in enumerate(lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]):
+    x = LAYOUT.live_text_x
+    w = LAYOUT.live_text_width
+    for index, line in enumerate(lines[: LAYOUT.live_top_line_count]):
         if not line:
             continue
-        y = LAYOUT["KEYPOINT_LIVE_TIP_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
+        y = LAYOUT.live_tip_y + index * LAYOUT.live_text_line_height
         canvas.draw_text(x, y, w, FONT_UNSCII_8, line, align="center")
 
 
@@ -392,22 +376,22 @@ def draw_live_data_panel(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
         return
 
     if snapshot.icon != "NONE":
-        scale = LAYOUT["KEYPOINT_LIVE_ICON_SCALE"]
+        scale = LAYOUT.live_icon_scale
         for row, bits in enumerate(ICONS[snapshot.icon]):
             for col, bit in enumerate(bits):
                 if bit == "1":
                     canvas.fill_rect(
-                        LAYOUT["KEYPOINT_LIVE_ICON_X"] + col * scale,
-                        LAYOUT["KEYPOINT_LIVE_ICON_Y"] + row * scale,
+                        LAYOUT.live_icon_x + col * scale,
+                        LAYOUT.live_icon_y + row * scale,
                         scale,
                         scale,
                         BLACK,
                     )
 
-    top_lines = snapshot.lines[: LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"]]
+    top_lines = snapshot.lines[: LAYOUT.live_top_line_count]
     _draw_title_bar(canvas, top_lines[0])
     for index, line in enumerate(top_lines[1:], start=1):
-        _draw_live_line(canvas, line, LAYOUT["KEYPOINT_LIVE_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"])
+        _draw_live_line(canvas, line, LAYOUT.live_text_y + index * LAYOUT.live_text_line_height)
 
     _draw_live_data_page_rail(canvas, snapshot)
 
@@ -419,10 +403,10 @@ def _draw_live_data_page_rail(canvas: Canvas, snapshot: LiveDataSnapshot) -> Non
     if not (snapshot.has_data and snapshot.total_pages > 1):
         return
 
-    x = LAYOUT["KEYPOINT_LIVE_TEXT_X"]
-    w = LAYOUT["KEYPOINT_LIVE_TEXT_WIDTH"]
-    y = LAYOUT["KEYPOINT_LIVE_PAGE_Y"]
-    h = LAYOUT["KEYPOINT_LIVE_PAGE_THUMB_HEIGHT"]
+    x = LAYOUT.live_text_x
+    w = LAYOUT.live_text_width
+    y = LAYOUT.live_page_y
+    h = LAYOUT.live_page_thumb_height
 
     canvas.fill_rect(x, y, w, 1, BLACK)  # rail / track
 
@@ -444,21 +428,17 @@ def draw_live_data_extra(canvas: Canvas, snapshot: LiveDataSnapshot) -> None:
     if not snapshot.has_data:
         return
 
-    for index, line in enumerate(snapshot.lines[LAYOUT["KEYPOINT_LIVE_TOP_LINE_COUNT"] :]):
-        _draw_live_line(
-            canvas, line, LAYOUT["KEYPOINT_LIVE_EXTRA_TEXT_Y"] + index * LAYOUT["KEYPOINT_LIVE_TEXT_LINE_HEIGHT"]
-        )
+    for index, line in enumerate(snapshot.lines[LAYOUT.live_top_line_count :]):
+        _draw_live_line(canvas, line, LAYOUT.live_extra_text_y + index * LAYOUT.live_text_line_height)
 
     # Health strip geometry from status.c draw_live_data_health_strip().
-    health_y = LAYOUT["KEYPOINT_LIVE_HEALTH_Y"]
-    health_h = LAYOUT["KEYPOINT_LIVE_HEALTH_HEIGHT"]
+    health_y = LAYOUT.live_health_y
+    health_h = LAYOUT.live_health_height
     if snapshot.stale:
         for segment_x in (0, 16, 33, 50, 66):
             canvas.fill_rect(segment_x, health_y, 6, health_h, BLACK)
     else:
-        canvas.fill_rect(
-            LAYOUT["KEYPOINT_LIVE_HEALTH_X"], health_y, LAYOUT["KEYPOINT_LIVE_HEALTH_WIDTH"], health_h, BLACK
-        )
+        canvas.fill_rect(LAYOUT.live_health_x, health_y, LAYOUT.live_health_width, health_h, BLACK)
 
 
 def draw_top(state: StatusState, snapshot: LiveDataSnapshot) -> Canvas:
@@ -477,10 +457,10 @@ def _draw_rect_outline(canvas: Canvas, x: int, y: int, w: int, h: int, color: in
 
 
 def _draw_profile_slot(canvas: Canvas, state: StatusState, index: int, x: int, y: int) -> None:
-    slot_w = LAYOUT["KEYPOINT_PROFILE_SLOT_WIDTH"]
-    slot_h = LAYOUT["KEYPOINT_PROFILE_SLOT_HEIGHT"]
-    corner = LAYOUT["KEYPOINT_PROFILE_CORNER_SIZE"]
-    mark = LAYOUT["KEYPOINT_PROFILE_MARK_SIZE"]
+    slot_w = LAYOUT.profile_slot_width
+    slot_h = LAYOUT.profile_slot_height
+    corner = LAYOUT.profile_corner_size
+    mark = LAYOUT.profile_mark_size
     active = index == state.active_profile_index
     connected = state.profile_connected[index]
     bonded = state.profile_bonded[index]
@@ -504,8 +484,8 @@ def _draw_profile_slot(canvas: Canvas, state: StatusState, index: int, x: int, y
     ink = WHITE if active else BLACK
     canvas.draw_text(x + 1, y + 1, 9, FONT_UNSCII_8, str(index + 1), align="left", color=ink)
 
-    mark_x = x + LAYOUT["KEYPOINT_PROFILE_MARK_X_OFFSET"]
-    mark_y = y + LAYOUT["KEYPOINT_PROFILE_MARK_Y_OFFSET"]
+    mark_x = x + LAYOUT.profile_mark_x_offset
+    mark_y = y + LAYOUT.profile_mark_y_offset
     if connected:
         canvas.fill_rect(mark_x, mark_y, mark, mark, ink)
     elif bonded:
@@ -533,9 +513,9 @@ def draw_middle(state: StatusState, snapshot: LiveDataSnapshot) -> Canvas:
     for index, (x, y) in enumerate(PROFILE_SLOT_ORIGINS):
         _draw_profile_slot(canvas, state, index, x, y)
     canvas.draw_text(
-        LAYOUT["KEYPOINT_LAYER_TEXT_X"],
-        LAYOUT["KEYPOINT_LAYER_TEXT_Y"],
-        LAYOUT["KEYPOINT_LAYER_TEXT_WIDTH"],
+        LAYOUT.layer_text_x,
+        LAYOUT.layer_text_y,
+        LAYOUT.layer_text_width,
         FONT_UNSCII_8,
         layer_info_text(state),
         align="center",
@@ -590,99 +570,41 @@ class PreviewCase:
 _PROFILES_CONNECTED = (True, False, False, False)
 _PROFILES_BONDED = (True, True, False, False)
 
-
-def _kv(label: str, value: str) -> str:
-    """Pad LABEL + value to a full LINE_MAX-wide line (monospace font ->
-    labels form a left column, values a right column). Mirrors the kv()
-    helper in send_keypoint_live_demo.py."""
-    if len(label) + len(value) >= LIVE_LINE_MAX:
-        raise ValueError(f"kv({label!r}, {value!r}) does not fit {LIVE_LINE_MAX} chars with a gap")
-    return f"{label}{' ' * (LIVE_LINE_MAX - len(label) - len(value))}{value}"
-
-
-def _title(text: str) -> str:
-    """Pad a card title to the full line width, mirroring rcink's title()."""
-    return text.ljust(LIVE_LINE_MAX)
-
-
-def _bar(pct: int) -> str:
-    """A [NNN] progress-bar row, mirroring rcink's Row(bar=...) encoding."""
-    return f"[{pct:03d}]"
-
-
-def _card(
-    icon: str,
-    *lines: str,
-    generation: int = 0xA0,
-    idx: int = 0,
-    total: int = 1,
-    led_hint: int = 0,
-) -> str:
-    """Build a KP3 frame; missing lines are sent empty."""
-    if len(lines) > LIVE_LINE_COUNT:
-        raise ValueError(f"at most {LIVE_LINE_COUNT} lines, got {len(lines)}")
-    padded = lines + ("",) * (LIVE_LINE_COUNT - len(lines))
-    return f"{LIVE_PREFIX}{generation:02X}|{idx}|{total}|{icon}|{led_hint}|" + "|".join(padded)
-
+#: Generation the demo deck is stamped with; any two-hex-digit value will do.
+_DEMO_GENERATION = 0xA0
 
 # The KEYPOINT keyboard only ever shows the claude + codex usage cards built by
-# rcink (producer/rcink/keypoint_cards.py, CARD_ORDER = ("claude", "codex")).
-# Each card is: title + a window row (countdown to reset) + a [bar] utilisation
-# row, twice (5H/7D), with L6 empty -- no timestamp line (show_timestamp=False),
-# no weather. Countdown strings follow rcink's fmt_countdown (NOW / 12m / 1h23m
-# / 18h / 4d). These cases mirror that exact shape.
-def _claude_card(five_win: str, five_bar: int, seven_win: str, seven_bar: int, *, led: int, **kw) -> str:
-    return _card(
-        "CLAUDE",
-        _title("CLAUDE"),
-        _kv("5H", five_win),
-        _bar(five_bar),
-        _kv("7D", seven_win),
-        _bar(seven_bar),
-        led_hint=led,
-        **kw,
-    )
-
-
-def _codex_card(five_win: str, five_bar: int, seven_win: str, seven_bar: int, *, led: int, **kw) -> str:
-    return _card(
-        "CODEX",
-        _title("CODEX"),
-        _kv("5H", five_win),
-        _bar(five_bar),
-        _kv("7D", seven_win),
-        _bar(seven_bar),
-        led_hint=led,
-        **kw,
-    )
-
-
+# rcink (producer/rcink/keypoint_cards.py, CARD_ORDER = ("claude", "codex")),
+# whose shape kp3.usage_card() owns: title + a window row (countdown to reset)
+# and a [bar] utilisation row per window (5H/7D), with L6 empty -- no timestamp
+# line (show_timestamp=False), no weather. The countdown strings below follow
+# rcink's fmt_countdown (NOW / 12m / 1h23m / 18h / 4d).
 DEMO_CASES: tuple[PreviewCase, ...] = (
     PreviewCase(
         # Fresh claude card, low usage, BLE connected on the base layer.
         name="claude_fresh",
         state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_claude_card("1h23m", 22, "4d", 41, led=0),
+        frame=kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0, generation=_DEMO_GENERATION),
     ),
     PreviewCase(
         # Codex card, one window into the attention band (>=75%) -> LED hint 2,
         # USB charging on the lower layer.
         name="codex_attention",
         state=StatusState(47, True, "usb", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 1, "LOWER"),
-        frame=_codex_card("12m", 78, "2d", 54, led=2),
+        frame=kp3.codex_card("12m", 78, "2d", 54, led_hint=2, generation=_DEMO_GENERATION),
     ),
     PreviewCase(
         # Claude near the 5H limit: countdown reads NOW, bars near full, warning.
         name="claude_warning",
         state=StatusState(93, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_claude_card("NOW", 96, "18h", 89, led=3),
+        frame=kp3.claude_card("NOW", 96, "18h", 89, led_hint=3, generation=_DEMO_GENERATION),
     ),
     PreviewCase(
         # Bonded but disconnected active profile -> LV_SYMBOL_CLOSE; stale data
         # stays readable, the segmented health strip flags the staleness.
         name="codex_stale",
         state=StatusState(64, False, "ble", 1, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_codex_card("3h5m", 45, "5d", 12, led=0),
+        frame=kp3.codex_card("3h5m", 45, "5d", 12, led_hint=0, generation=_DEMO_GENERATION),
         stale=True,
     ),
     PreviewCase(
@@ -690,7 +612,7 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         # page rail with the thumb riding to the right.
         name="claude_codex_deck",
         state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
-        frame=_codex_card("1h5m", 33, "6d", 8, led=0, idx=1, total=2),
+        frame=kp3.codex_card("1h5m", 33, "6d", 8, led_hint=0, generation=_DEMO_GENERATION, index=1, total=2),
     ),
     PreviewCase(
         # Open (unbonded) active profile -> LV_SYMBOL_SETTINGS; no frame ever
@@ -698,31 +620,6 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         name="no_data_waiting",
         state=StatusState(15, False, "ble", 2, _PROFILES_CONNECTED, _PROFILES_BONDED, 2, "SYMBOL"),
     ),
-)
-
-STALE_PREVIEW_FILES = (
-    # Renamed cases (weather demo -> real claude/codex cards).
-    "left_screen_rt_sun_base.png",
-    "left_screen_rt_claude_usb_charging.png",
-    "left_screen_rt_codex_stale.png",
-    "left_screen_rt_storm_max_width.png",
-    "left_screen_rt_temp_short.png",
-    "left_screen_no_data_open_profile.png",
-    "left_screen_rt_rain_max_width.png",
-    # Pre-glass-simulation outputs.
-    "screen_ok_base.png",
-    "screen_stale_lower.png",
-    "screen_empty_symbol.png",
-    # Component-era outputs.
-    "live_ok.png",
-    "live_stale.png",
-    "live_empty.png",
-    "profile_layer.png",
-    "status_contact_sheet.png",
-    "layer_base.png",
-    "layer_symbol.png",
-    "profile_grid.png",
-    "status_full_screen.png",
 )
 
 
@@ -733,9 +630,16 @@ def scale_image(image: Image.Image, scale: int) -> Image.Image:
 
 
 def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
+    """Regenerate the whole preview set.
+
+    Every PNG already in the directory is dropped first: the directory holds
+    nothing but this renderer's output, so renaming or removing a demo case
+    cannot leave a stale image behind pretending to be current.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    for stale_name in STALE_PREVIEW_FILES:
-        (output_dir / stale_name).unlink(missing_ok=True)
+    for previous in output_dir.glob("*.png"):
+        if previous.is_file():
+            previous.unlink()
 
     written: list[Path] = []
     for case in DEMO_CASES:
@@ -756,7 +660,12 @@ def write_frame_preview(frame: str, output: Path, scale: int = 4, stale: bool = 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Render pixel-exact KEYPOINT left-screen (72x144 glass) previews.")
-    parser.add_argument("--output-dir", type=Path, default=Path("tmp/status-preview"))
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("tmp/status-preview"),
+        help="Where the PNGs land. The demo set regenerates it: every PNG already there is dropped first.",
+    )
     parser.add_argument("--scale", type=int, default=4)
     parser.add_argument("--frame", help="Render this single KP3 frame instead of the demo set.")
     parser.add_argument("--stale", action="store_true", help="Render --frame in the stale state.")
