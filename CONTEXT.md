@@ -1,6 +1,6 @@
 # CONTEXT.md — KEYPOINT domain glossary
 
-Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` + `live_data.c` define the KP3 contract; everything else (Python tooling, tests, docs, external producer) derives from them. Never restate a contract value — derive or import it.
+Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants, enums, snapshot) + `live_data_core.c` (parse, deck staging, staleness) define the KP3 contract; everything else (Python tooling, tests, docs, external producer) derives from them. Never restate a contract value — derive or import it.
 
 ## Wire / protocol
 
