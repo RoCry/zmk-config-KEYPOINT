@@ -7,6 +7,8 @@ KEYMAP = ROOT / "config/keypoint.keymap"
 BINDING_CHECKER = ROOT / "scripts/check_keypoint_bindings.py"
 LIVE_DATA_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data.h"
 LIVE_DATA_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data.c"
+LIVE_DATA_CORE_C = ROOT / "config/boards/shields/lpm_view/widgets/live_data_core.c"
+LIVE_DATA_CORE_H = ROOT / "config/boards/shields/lpm_view/widgets/live_data_core.h"
 STATUS_C = ROOT / "config/boards/shields/lpm_view/widgets/status.c"
 TRACKPAD_LED_C = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/custom_driver_left/trackpad_led.c"
 A320_C = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/custom_driver_left/a320.c"
@@ -100,6 +102,7 @@ def test_trackpad_led_consumes_live_data_hint_without_capslock_animation() -> No
 
 def test_live_data_page_navigation_listener() -> None:
     text = LIVE_DATA_C.read_text()
+    core = LIVE_DATA_CORE_C.read_text()
 
     # Left center-cluster keys (pos 32 NEXT, 33 PREV) drive page navigation.
     assert "#define KEYPOINT_LIVE_PAGE_NEXT_POS 32" in text
@@ -107,19 +110,46 @@ def test_live_data_page_navigation_listener() -> None:
     # FN-gated so &msc SCRL_* on those keys still scrolls.
     assert "zmk_keymap_highest_layer_active() == KEYPOINT_FN_LAYER" in text
     assert "ZMK_SUBSCRIPTION(keypoint_live_data_page_keys, zmk_position_state_changed)" in text
-    # Wrap-around page advance over the deck.
-    assert "(view_index + deck_total + delta) % deck_total" in text
+    # Wrap-around page advance over the deck, computed by the pure core.
+    assert "(deck->view_index + deck->total + delta) % deck->total" in core
 
 
 def test_live_data_uses_generation_staged_deck_commit() -> None:
-    text = LIVE_DATA_C.read_text()
+    text = LIVE_DATA_CORE_C.read_text()
+    header = LIVE_DATA_CORE_H.read_text()
 
-    assert "pending_deck[KEYPOINT_LIVE_DATA_PAGE_MAX]" in text
+    assert "pending_cards[KEYPOINT_LIVE_DATA_PAGE_MAX]" in header
     assert "pending_generation" in text
     assert "pending_mask" in text
-    assert "received_mask_for_total(pending_total)" in text
-    assert "memcpy(deck, pending_deck, sizeof(deck));" in text
-    assert "deck_generation = pending_generation;" in text
+    assert "received_mask_for_total(deck->pending_total)" in text
+    assert "memcpy(deck->cards, deck->pending_cards, sizeof(deck->cards));" in text
+    assert "deck->generation = deck->pending_generation;" in text
+
+
+def test_live_data_core_is_free_of_zephyr_and_globals() -> None:
+    text = LIVE_DATA_CORE_C.read_text()
+    header = LIVE_DATA_CORE_H.read_text()
+
+    # The core must stay host-compilable: no Zephyr/LVGL anywhere in its
+    # include graph (live_data.h itself only pulls in stdbool/stdint).
+    for source in (text, header):
+        assert "<zephyr/" not in source
+        assert "<zmk/" not in source
+        assert "lvgl" not in source
+        assert "k_uptime_get()" not in source
+        assert "k_mutex" not in source
+
+    # Deck state is caller-owned and time is an argument, not a global clock.
+    assert "static struct keypoint_live_data_deck" not in text
+    assert "int64_t now_ms" in header
+    assert "struct keypoint_live_data_deck *deck" in header
+
+    # The glue owns the single instance and the lock around every core call.
+    glue = LIVE_DATA_C.read_text()
+    assert "static struct keypoint_live_data_deck live_deck;" in glue
+    assert "keypoint_live_data_core_store(&live_deck" in glue
+    assert "keypoint_live_data_core_snapshot(&live_deck, k_uptime_get())" in glue
+    assert "keypoint_live_data_core_page_advance(&live_deck, delta)" in glue
 
 
 def test_status_widget_renders_page_indicator() -> None:
@@ -163,6 +193,7 @@ def test_live_data_compiled_for_central_lpm_view() -> None:
     text = CMAKE.read_text()
 
     assert "widgets/live_data.c" in text
+    assert "widgets/live_data_core.c" in text
     assert "NOT CONFIG_ZMK_SPLIT OR CONFIG_ZMK_SPLIT_ROLE_CENTRAL" in text
 
 
@@ -402,7 +433,7 @@ def test_live_data_icon_does_not_reduce_text_width() -> None:
 
 def test_live_data_kp3_icon_contract_is_explicit() -> None:
     header = LIVE_DATA_H.read_text()
-    firmware = LIVE_DATA_C.read_text()
+    firmware = LIVE_DATA_CORE_C.read_text()
     status = STATUS_C.read_text()
 
     for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
@@ -435,9 +466,11 @@ def test_codex_icon_uses_openai_mark_inspired_bitmap() -> None:
 
 def test_live_data_stale_keeps_last_payload_text() -> None:
     text = LIVE_DATA_C.read_text()
+    core = LIVE_DATA_CORE_C.read_text()
 
     assert '"STALE"' not in text
-    assert "snapshot.stale" in text
+    assert '"STALE"' not in core
+    assert "snapshot.stale" in core
 
 
 def test_demo_sender_uses_same_limits() -> None:
