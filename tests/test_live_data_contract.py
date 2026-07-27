@@ -101,15 +101,28 @@ def test_build_matrix_uses_short_artifact_names() -> None:
         assert f"artifact-name: {artifact_name}" in text
 
 
-def test_bootloader_shortcuts_are_on_requested_layer_positions() -> None:
+def test_bootloader_is_reachable_but_not_from_a_layer_held_to_scroll() -> None:
+    """Both encoder presses enter the bootloader -- from FN, and only from FN.
+
+    They used to sit on LOWER and SYMBOL. Those are the layers a layer-tap holds
+    to put a pointing device into scroll mode, and each encoder press is one key
+    from the thumb key doing the holding: a slip mid-scroll dropped that half
+    into UF2. FN is never held for anything, which is the point.
+    """
     checker = load_binding_checker()
     text = checker.read_keymap_text(KEYMAP)
 
-    lower_bindings = checker.layer_bindings(text, "lower_layer")
-    symbol_bindings = checker.layer_bindings(text, "symbol_layer")
+    layers = {name: checker.layer_bindings(text, name) for name in checker.LAYER_NAMES}
+    left_encoder, right_encoder = 45, 52
 
-    assert lower_bindings[45] == "&bootloader"
-    assert symbol_bindings[52] == "&bootloader"
+    assert layers["fn_layer"][left_encoder] == "&bootloader"
+    assert layers["fn_layer"][right_encoder] == "&bootloader"
+
+    for held in ("lower_layer", "symbol_layer"):
+        for position in (left_encoder, right_encoder):
+            assert layers[held][position] != "&bootloader", (
+                f"{held}[{position}] is a scroll-hold away from the bootloader"
+            )
 
 
 def test_trackpad_led_renders_attention_levels_and_nothing_else() -> None:

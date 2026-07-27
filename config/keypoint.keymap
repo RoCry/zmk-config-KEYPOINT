@@ -11,50 +11,23 @@
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/pointing.h>
 
+/* Layer numbers are also referenced from zitaotech_keypoint_left.dts, where the
+ * trackpoint's input listener gates scrolling on LOWER and the temp-layer
+ * processor raises POINTING. tests/test_pointing_layers.py holds the two files
+ * to the same numbers -- a silent mismatch there disables scrolling outright. */
 #define LOWER 1
 #define SYMBOL 2
 #define FN 3
 #define POINTING 4
-#define BOT bootloader
 
 / {
-    behaviors {
-        td0: tap_dance_0 {
-            compatible = "zmk,behavior-tap-dance";
-            #binding-cells = <0>;
-            tapping-term-ms = <400>;
-            bindings = <&mkp LCLK>, <&bt BT_CLR>;
-        };
-    };
-
-    behaviors {
-        hm: homerow_mods {
-            compatible = "zmk,behavior-hold-tap";
-            #binding-cells = <2>;
-            tapping-term-ms = <500>;
-            bindings = <&kp &kp>;
-        };
-    };
-
-    behaviors {
-        sp_sc: behavior_spacescroll {
-            compatible = "zmk,behavior-hold-tap";
-            #binding-cells = <2>;
-            flavor = "tap-preferred";     /* 单击优先 */
-            tapping-term-ms = <200>;       /* 长按阈值 */
-            bindings = <&none &kp>;        /* hold=none, tap=space */
-        };
-    };
-
     behaviors {
         BLE_encoder: BLE_encoder {
             compatible = "zmk,behavior-sensor-rotate";
             #sensor-binding-cells = <0>;
             bindings = <&bt BT_NXT>, <&bt BT_PRV>;
         };
-    };
 
-    behaviors {
         scroll_encoder: scroll_encoder {
             compatible = "zmk,behavior-sensor-rotate";
             #sensor-binding-cells = <0>;
@@ -102,8 +75,8 @@
             bindings = <
 &kp TAB        &kp Q     &kp W     &kp E       &kp R     &kp T            &kp Y            &kp U            &kp I           &kp O         &kp P  &kp BSPC
 &mt LCTRL ESC  &kp A     &kp S     &kp D       &kp F     &kp G            &mkp LCLK        &mkp LCLK        &kp H           &kp J         &kp K  &kp L           &kp BSLH         &kp ENTER
-&kp LSHFT      &kp Z     &kp X     &kp C       &kp V     &kp B            &none            &none            &mkp LCLK       &mkp MB3     &kp N  &kp M           &kp COMMA        &kp DOT       &kp UP      &mt RSHFT FSLH
-&kp LCTRL      &kp LALT  &kp LGUI  &kp C_MUTE  &kp LALT  &mt LGUI ESC      &lt LOWER SPACE  &lt SYMBOL BSPC  &mt RSHFT TAB   &mt LC(LA(LS(LGUI))) RALT  &kp LC(UP)  &lt LOWER LEFT  &lt SYMBOL DOWN  &lt FN RIGHT
+&kp LSHFT      &kp Z     &kp X     &kp C       &kp V     &kp B            &none            &none            &mkp LCLK       &mkp RCLK    &kp N  &kp M           &kp COMMA        &kp DOT       &kp UP      &mt RSHFT FSLH
+&kp LCTRL      &kp LALT  &kp LGUI  &kp C_MUTE  &kp LALT  &mt LGUI ESC      &lt LOWER SPACE  &lt SYMBOL BSPC  &mt RSHFT TAB   &mt LC(LA(LS(LGUI))) RALT  &kp C_PP    &lt LOWER LEFT  &lt SYMBOL DOWN  &lt FN RIGHT
             >;
 
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &inc_dec_kp F14 F15>;
@@ -115,7 +88,7 @@
 &gresc     &kp N1  &kp N2  &kp N3      &kp N0  &kp N0     &kp N6     &kp N7     &kp N8      &kp N9      &kp N0  &kp DEL
 &kp LCTRL  &kp N4  &kp N5  &kp N6      &kp N0  &kp N0     &mkp RCLK  &mkp RCLK  &kp LEFT    &kp DOWN    &kp UP  &kp RIGHT  &trans  &trans
 &kp LSHFT  &kp N7  &kp N8  &kp N9      &kp N0  &cmd_grave  &trans     &trans     &bl BL_DEC  &bl BL_INC  &trans  &trans     &trans  &trans  &trans  &trans
-&trans     &trans  &trans  &bootloader &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
+&trans     &trans  &trans  &trans      &trans  &trans     &mo FN     &kp BSPC   &trans      &trans      &trans  &trans     &trans  &trans
             >;
 
             sensor-bindings = <&BLE_encoder &scroll_encoder>;
@@ -127,7 +100,7 @@
 &kp ESC    &kp EXCL   &kp AT     &kp HASH  &kp DLLR      &kp PRCNT  &kp CARET   &kp AMPS  &kp STAR  &kp LPAR  &kp RPAR   &trans
 &kp LCTRL  &kp MINUS  &kp UNDER  &kp SQT   &kp DQT       &kp BSLH   &kp C_MUTE  &mkp MB3  &kp PIPE  &kp LBKT  &kp RBKT   &kp LBRC  &kp RBRC   &trans
 &kp LSHFT  &kp EQUAL  &kp PLUS   &kp FSLH  &kp QUESTION  &kp GRAVE  &trans      &trans    &trans    &trans    &kp TILDE  &kp SEMI  &kp COLON  &trans  &trans  &kp RSHFT
-&trans     &trans     &trans     &trans    &kp LALT      &kp LGUI   &mo FN      &kp BSPC  &trans    &trans    &bootloader &trans    &trans     &trans
+&trans     &trans     &trans     &trans    &kp LALT      &kp LGUI   &mo FN      &kp BSPC  &trans    &trans    &trans      &trans    &trans     &trans
             >;
 
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;
@@ -137,9 +110,9 @@
             display-name = "FN";
             bindings = <
 &bt BT_CLR    &kp F1        &kp F2        &kp F3      &kp F4      &kp F5   &kp F6          &kp F7        &kp F8  &kp F9     &kp F10   &trans
-&bt BT_SEL 0  &kp C_VOL_DN  &kp C_VOL_UP  &kp C_MUTE  &kp C_PLAY  &none    &mkp LCLK       &mkp RCLK     &none   &mkp LCLK  &mkp MB3  &none      &none  &none
+&bt BT_SEL 0  &kp C_VOL_DN  &kp C_VOL_UP  &kp C_MUTE  &kp C_PP    &none    &mkp LCLK       &mkp RCLK     &none   &mkp LCLK  &mkp MB3  &none      &none  &none
 &bt BT_SEL 1  &kp F14       &kp F15       &kp F11     &kp F12     &kp F13  &msc SCRL_DOWN  &msc SCRL_UP  &none   &none      &none     &mkp RCLK  &none  &none  &none  &none
-&bt BT_SEL 2  &none         &none         &none       &none       &none    &none           &none         &none   &none      &none     &none      &none  &none
+&bt BT_SEL 2  &none         &none         &bootloader &none       &none    &none           &none         &none   &none      &bootloader &none     &none  &none
             >;
 
             sensor-bindings = <&inc_dec_kp C_VOL_UP C_VOL_DN &scroll_encoder>;

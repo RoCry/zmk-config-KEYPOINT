@@ -7,9 +7,26 @@ ZMK config for the ZitaoTech KEYPOINT split keyboard.
 - Left display LiveData service: encrypted BLE write characteristic for compact status cards.
 - KP3 deck protocol: whole-deck generation id, page index/total, icon, LED hint, six 9-char text lines.
 - Trackpad LED status patterns: touch/backlight preview, USB transport confirmation, LiveData generation confirmation, stale/no-data/error/warning/attention pulses.
-- A320 trackpad: interrupt-driven I2C read path, scroll/arrow modes, touch state exposed to the LED driver.
+- A320 trackpad: interrupt-driven I2C read path, scroll/cursor modes, touch state exposed to the LED driver.
+- TrackPoint: cursor only on the right half; scrolling is a layer decision made on the central half.
 
 CapsLock LED animation was intentionally removed. This config treats the trackpad LED as a system/status light, not a HID indicator.
+
+## Pointing
+
+Two devices, two different places the scroll decision gets made.
+
+The **trackpad** (left, central) scrolls by default and moves the cursor while an inner thumb key is held — `CONFIG_A320_START_IN_SCROLL_MODE=y` picks which way round that is. The driver watches the raw key position, so the mode key works on any layer.
+
+The **TrackPoint** (right, peripheral) only ever reports cursor motion. Its scroll gesture is owned by `trackpoint_listener` on the left board: while the LOWER layer is active, an input processor remaps its X/Y onto the wheel axes and inverts Y. Hold either LOWER layer-tap — the left thumb `SPACE` or the bottom-row `LEFT` — and push the TrackPoint.
+
+That Y inversion is a fixed axis convention, not a taste setting: `REL_X` and `HWHEEL` are both positive-right, but `REL_Y` is positive-down while `WHEEL` is positive-up. Every cursor→scroll conversion owes exactly one Y negation. The trackpad pays it in its driver; the TrackPoint pays it with `zip_scroll_transform`. Whether scrolling then feels "natural" is the host's business — macOS applies its own inversion on top, system-wide — so the firmware's only job is to keep the two halves agreeing with each other.
+
+Both mode keys are **layer-taps on purpose**. A layer-tap held sends nothing to the host; a mod-tap held sends a modifier, and a Shift leaking out mid-gesture turns vertical scrolling into horizontal scrolling on macOS. Any future pointing modifier belongs on a layer-tap or a `&none`, never on a `&mt`.
+
+Any TrackPoint motion also raises the POINTING layer for 700 ms, where the two right thumb keys become left and right click.
+
+Those layer numbers live in two files that cannot see each other — `config/keypoint.keymap` and `zitaotech_keypoint_left.dts` — and a mismatch fails no build, it just silently kills the gesture. `tests/test_pointing_layers.py` is what holds them together.
 
 ## LiveData KP3 Contract
 

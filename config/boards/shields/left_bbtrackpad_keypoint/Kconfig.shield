@@ -22,30 +22,6 @@ config A320_START_IN_SCROLL_MODE
       If yes (y), the default state is scroll mode, and holding the toggle key switches to mouse mode.
       If no (n), the default state is mouse mode, and holding the toggle key switches to scroll mode.
 
-config A320_ARROW_DEADZONE
-    int "Arrow-mode deadzone"
-    default 1
-    help
-      Deadzone to filter out slight hand tremors.
-
-config A320_ARROW_DIVISOR_SLOW
-    int "Arrow divisor slow (Fine-grained control)"
-    default 60
-    range 1 255
-
-config A320_ARROW_DIVISOR_FAST
-    int "Arrow divisor fast (Max speed limit)"
-    default 8
-    range 1 255
-
-config A320_DOMINANT_NUMERATOR
-    int "Dominant axis numerator for accidental touch prevention"
-    default 3
-
-config A320_DOMINANT_DENOMINATOR
-    int "Dominant axis denominator for accidental touch prevention"
-    default 2
-
 config A320_MOUSE_SENS_BASE_PERCENT
     int "Mouse sensitivity base (Percentage, 40 = 0.4)"
     default 40

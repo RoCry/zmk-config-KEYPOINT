@@ -30,5 +30,10 @@ Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants
 
 ## Input
 
-- **Motion shaping** — pure math turning device deltas into cursor / scroll / arrow events: residual accumulation, arrow repeat, speed curve. One module shared by both pointing drivers.
+- **Motion shaping** — pure math turning device deltas into cursor movement and scroll ticks: residual accumulation, speed-stepped scroll gain. One module shared by both pointing drivers. (Arrow mode — TrackPoint deltas as arrow-key repeats — was removed: its mode key was a bare `&kp`, so holding it typed the letter.)
 - **Speed preference** — the user's cursor-speed setting, a named input to motion shaping. (Historically smuggled through trackpad/trackpoint LED brightness getters.)
+- **Mode key** — a held key that changes what a pointing device's motion means. Must be a layer-tap or `&none`: held, it may send *nothing* to the host. A mod-tap here leaks its modifier for the whole gesture.
+- **Scroll gesture** — hold a mode key, move a pointing device, scroll. The trackpad decides this in its own driver off a raw key position; the TrackPoint's decision is made on the central half by `trackpoint_listener`, gated on the LOWER layer. Same gesture, two mechanisms, because the TrackPoint's driver runs on the peripheral and only ever reports cursor motion.
+- **Wheel axis polarity** — `REL_X` and `HWHEEL` are both positive-right, but `REL_Y` is positive-*down* while `WHEEL` is positive-*up*. So turning cursor motion into scrolling always costs one Y negation and never an X one. Both devices pay it: the trackpad in its driver (`INPUT_REL_WHEEL, -ticks.y`), the TrackPoint via `zip_scroll_transform INPUT_TRANSFORM_Y_INVERT`. Skip it and that device scrolls backwards and disagrees with the other one — with no other symptom.
+- **POINTING layer** — raised for 700 ms by any TrackPoint motion (`zip_temp_layer`), not by any key. It turns the right thumb keys into mouse buttons while you are pointing.
+- **Layer-number seam** — layer indices are positional in the keymap, but `zitaotech_keypoint_left.dts` restates two of them as macros to wire the listener. Neither file can see the other and a mismatch still builds; `tests/test_pointing_layers.py` derives the real indices and holds both files to them.

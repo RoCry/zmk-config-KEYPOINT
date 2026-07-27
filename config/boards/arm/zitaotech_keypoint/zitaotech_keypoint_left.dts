@@ -8,58 +8,17 @@
 #include "zitaotech_keypoint.dtsi"
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/input_transform.h>
+#include <input/processors.dtsi>
 
+/* Both numbers name layers declared in keypoint.keymap (POINTING and LOWER).
+ * They are restated here because the keymap's #defines are not visible to this
+ * board file; tests/test_pointing_layers.py parses both files and fails if they
+ * ever disagree. A silent mismatch does not fail the build -- it just stops the
+ * TrackPoint scrolling, or raises the wrong layer. */
 #define TRACKPOINT_POINTING_LAYER 4
 #define TRACKPOINT_POINTING_TIMEOUT_MS 700
-
-/ {
-    input_processors {
-
-        zip_temp_layer: zip_temp_layer {
-            compatible = "zmk,input-processor-temp-layer";
-            #input-processor-cells = <2>;
-        };
-
-        ip_behaviors0: ip_behaviors0 {
-            compatible = "zmk,input-processor-behaviors";
-            #input-processor-cells = <0>;
-            type = <INPUT_EV_KEY>;
-            codes = <INPUT_BTN_0>;
-            bindings = <&kp RIGHT>;
-        };
-        ip_behaviors1: ip_behaviors1 {
-            compatible = "zmk,input-processor-behaviors";
-            #input-processor-cells = <0>;
-            type = <INPUT_EV_KEY>;
-            codes = <INPUT_BTN_1>;
-            bindings = <&kp LEFT>;
-        };
-        ip_behaviors2: ip_behaviors2 {
-            compatible = "zmk,input-processor-behaviors";
-            #input-processor-cells = <0>;
-            type = <INPUT_EV_KEY>;
-            codes = <INPUT_BTN_2>;
-            bindings = <&kp DOWN>;
-        };
-        ip_behaviors3: ip_behaviors3 {
-            compatible = "zmk,input-processor-behaviors";
-            #input-processor-cells = <0>;
-            type = <INPUT_EV_KEY>;
-            codes = <INPUT_BTN_3>;
-            bindings = <&kp UP>;
-        };
-
-        trackpoint_scroll_mapper: trackpoint_scroll_mapper {
-            compatible = "zmk,input-processor-code-mapper";
-            #input-processor-cells = <0>;
-            type = <INPUT_EV_REL>;
-            map
-                = <INPUT_REL_Y INPUT_REL_WHEEL>
-                , <INPUT_REL_X INPUT_REL_HWHEEL>
-                ;
-        };
-    };
-};
+#define TRACKPOINT_SCROLL_LAYER 1
 
 / {
     chosen {
@@ -205,16 +164,26 @@
 &trackpoint_listener {
     status = "okay";
     input-processors =
-        <&zip_temp_layer TRACKPOINT_POINTING_LAYER TRACKPOINT_POINTING_TIMEOUT_MS>,
-        <&ip_behaviors0>,
-        <&ip_behaviors1>,
-        <&ip_behaviors2>,
-        <&ip_behaviors3>;
+        <&zip_temp_layer TRACKPOINT_POINTING_LAYER TRACKPOINT_POINTING_TIMEOUT_MS>;
 
+    /* Hold-to-scroll for the TrackPoint. The right half only ever reports cursor
+     * motion; the decision to scroll is made here, on the central, because it is
+     * a *layer* decision -- and a layer-tap held to reach it sends nothing to the
+     * host. The layer number must stay in step with LOWER in keypoint.keymap;
+     * tests/test_pointing_layers.py enforces that.
+     *
+     * The Y invert is not a preference, it is the axis convention: REL_X and
+     * HWHEEL are both positive-right, but REL_Y is positive-*down* while WHEEL
+     * is positive-*up*. Remapping the code alone therefore lands vertical
+     * scrolling backwards -- push up, page goes down -- and disagrees with the
+     * trackpad, whose driver negates exactly this one axis for the same reason
+     * (`INPUT_REL_WHEEL, -ticks.y` against an un-negated cursor Y in a320.c). */
     trackpoint_layer_1_scroll {
-        layers = <1>;
+        layers = <TRACKPOINT_SCROLL_LAYER>;
         process-next;
-        input-processors = <&trackpoint_scroll_mapper>;
+        input-processors =
+            <&zip_xy_to_scroll_mapper>,
+            <&zip_scroll_transform INPUT_TRANSFORM_Y_INVERT>;
     };
 };
 
