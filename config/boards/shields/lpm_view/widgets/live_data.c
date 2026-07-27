@@ -34,28 +34,66 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define KEYPOINT_LIVE_PAGE_PREV_POS 33
 #define KEYPOINT_FN_LAYER 3 /* matches FN in config/keypoint.keymap */
 
+/* Consumers of the snapshot, at most this many. The seam is one-way: this
+ * module never names them, so the bound is the only thing it knows. */
+#define KEYPOINT_LIVE_DATA_LISTENER_MAX 4
+
 K_MUTEX_DEFINE(live_data_mutex);
 
 /* Deck state lives here; live_data_core.c owns the logic that mutates it and is
  * not thread-aware, so every call below is made under live_data_mutex. */
 static struct keypoint_live_data_deck live_deck;
 
-static void live_data_display_work_cb(struct k_work *work) {
-    ARG_UNUSED(work);
-    keypoint_live_data_refresh_displays();
+/* Bumped when a commit installs a *different* generation than the one already
+ * on the glass -- a new deck rather than an in-place page update. Written under
+ * live_data_mutex; the notify work below turns it into the change edge. */
+static uint8_t deck_epoch;
+
+static keypoint_live_data_listener_t listeners[KEYPOINT_LIVE_DATA_LISTENER_MAX];
+static uint8_t listener_count;
+
+void keypoint_live_data_subscribe(keypoint_live_data_listener_t listener) {
+    __ASSERT_NO_MSG(listener != NULL);
+    __ASSERT(listener_count < ARRAY_SIZE(listeners),
+             "live-data listener table full; raise KEYPOINT_LIVE_DATA_LISTENER_MAX");
+
+    if (listener_count >= ARRAY_SIZE(listeners)) {
+        LOG_ERR("Live-data listener dropped: table full");
+        return;
+    }
+
+    listeners[listener_count++] = listener;
 }
 
-static K_WORK_DEFINE(live_data_display_work, live_data_display_work_cb);
+static void live_data_notify_work_cb(struct k_work *work) {
+    ARG_UNUSED(work);
 
-static void submit_live_data_display_refresh(void) {
+    /* Only this callback reads or writes notified_epoch, and it only ever runs
+     * on the display work queue, so the edge needs no lock. */
+    static uint8_t notified_epoch;
+    const uint8_t epoch = deck_epoch;
+    const enum keypoint_live_data_change change = (epoch != notified_epoch)
+                                                      ? KEYPOINT_LIVE_DATA_CHANGE_GENERATION
+                                                      : KEYPOINT_LIVE_DATA_CHANGE_REFRESH;
+    notified_epoch = epoch;
+
+    for (uint8_t i = 0; i < listener_count; i++) {
+        listeners[i](change);
+    }
+}
+
+static K_WORK_DEFINE(live_data_notify_work, live_data_notify_work_cb);
+
+/* Subscribers run on the display work queue, never on the BLE RX thread. */
+static void notify_live_data_changed(void) {
     if (zmk_display_is_initialized()) {
-        k_work_submit_to_queue(zmk_display_work_q(), &live_data_display_work);
+        k_work_submit_to_queue(zmk_display_work_q(), &live_data_notify_work);
     }
 }
 
 static void live_data_stale_work_cb(struct k_work *work) {
     ARG_UNUSED(work);
-    submit_live_data_display_refresh();
+    notify_live_data_changed();
 }
 
 static K_WORK_DELAYABLE_DEFINE(live_data_stale_work, live_data_stale_work_cb);
@@ -91,8 +129,13 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
     }
 
     k_mutex_lock(&live_data_mutex, K_FOREVER);
+    const uint8_t previous_generation = live_deck.generation;
+    const bool had_deck = live_deck.total > 0;
     const bool committed = keypoint_live_data_core_store(&live_deck, generation, idx, total, icon,
                                                          led_hint, parsed, k_uptime_get());
+    if (committed && (!had_deck || live_deck.generation != previous_generation)) {
+        deck_epoch++;
+    }
     k_mutex_unlock(&live_data_mutex);
 
     if (!committed) {
@@ -100,7 +143,7 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
     }
 
     k_work_reschedule(&live_data_stale_work, K_MSEC(KEYPOINT_LIVE_DATA_STALE_MS + 1));
-    submit_live_data_display_refresh();
+    notify_live_data_changed();
 
     return len;
 }
@@ -111,7 +154,7 @@ static void live_data_page_advance(int delta) {
     k_mutex_unlock(&live_data_mutex);
 
     if (changed) {
-        submit_live_data_display_refresh();
+        notify_live_data_changed();
     }
 }
 

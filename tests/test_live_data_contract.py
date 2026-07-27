@@ -1,5 +1,10 @@
+import ast
 import importlib.util
+import random
 from pathlib import Path
+
+import keypoint_demo_cards as demo_cards
+import kp3
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_YAML = ROOT / "build.yaml"
@@ -23,8 +28,41 @@ STATUS_INFO_PANEL_H = ROOT / "config/boards/shields/lpm_view/widgets/status_info
 STATUS_LAYOUT_H = ROOT / "config/boards/shields/lpm_view/widgets/status_layout.h"
 UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
 CMAKE = ROOT / "config/boards/shields/lpm_view/CMakeLists.txt"
+LEFT_CMAKE = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/CMakeLists.txt"
 KCONFIG = ROOT / "config/boards/shields/lpm_view/Kconfig.defconfig"
 SENDER = ROOT / "scripts/send_keypoint_live_demo.py"
+DIAGNOSE = ROOT / "scripts/diagnose_keypoint_live.py"
+
+
+def sender_ast() -> ast.Module:
+    """The demo sender parsed rather than imported.
+
+    CI installs neither bleak nor typer, so the module cannot be executed here
+    -- but its module-level declarations are still real values, not source
+    text, once they come back out of the AST.
+    """
+    return ast.parse(SENDER.read_text())
+
+
+def module_assigned_names(module: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in module.body:
+        match node:
+            case ast.Assign(targets=targets):
+                names.update(target.id for target in targets if isinstance(target, ast.Name))
+            case ast.AnnAssign(target=ast.Name(id=name)):
+                names.add(name)
+    return names
+
+
+def module_constants(module: ast.Module) -> dict[str, object]:
+    return {
+        target.id: node.value.value
+        for node in module.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
 
 
 def load_binding_checker():
@@ -86,18 +124,94 @@ def test_live_data_deck_contract_constants() -> None:
     assert "enum keypoint_live_data_led_hint *led_hint" in text
 
 
-def test_trackpad_led_consumes_live_data_hint_without_capslock_animation() -> None:
+def test_trackpad_led_renders_attention_levels_and_nothing_else() -> None:
     text = TRACKPAD_LED_C.read_text()
 
-    assert '#include "../../lpm_view/widgets/live_data.h"' in text
-    assert "keypoint_live_data_snapshot_get()" in text
+    # Plain include: the shield's CMakeLists puts lpm_view/widgets on the path,
+    # so the driver no longer reaches across shields by relative path.
+    assert '#include "live_data.h"' in text
+    assert "../../lpm_view" not in text
+
+    # Subscribes to the one-way seam; the new-deck confirm pulse is driven by
+    # the notification, not by comparing generations here.
+    assert "keypoint_live_data_subscribe(live_data_changed)" in text
+    assert "KEYPOINT_LIVE_DATA_CHANGE_GENERATION" in text
     assert "live_confirm_start_ms" in text
-    assert "live_snapshot.led_hint" in text
-    assert "snapshot.generation" in text
-    assert "KEYPOINT_LIVE_DATA_LED_HINT_WARNING" in text
+
+    # Attention level -> blink pattern is the whole job. No icon names, no LED
+    # hints, no staleness or generation math: a new icon never lands here.
+    assert "keypoint_live_data_snapshot_get().attention" in text
+    for icon in ("SUN", "CLOUD", "RAIN", "TEMP", "CODE", "TIME", "CODEX", "CLAUDE"):
+        assert f"KEYPOINT_LIVE_DATA_ICON_{icon}" not in text
+    assert "KEYPOINT_LIVE_DATA_ICON_" not in text
+    assert "KEYPOINT_LIVE_DATA_LED_HINT" not in text
+    assert "snapshot.stale" not in text
+    assert "snapshot.generation" not in text
+    assert "live_generation" not in text
+
+    # "Live data is compiled in" is stated once, in Kconfig, and this file has
+    # exactly one #if referencing it.
+    assert "IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA)" in text
+    assert text.count("#if ") == 1
+    assert "TRACKPAD_LED_HAS_LIVE_DATA" not in text
+
     assert "zmk_hid_indicators_get_current_profile" not in text
     assert "capslock" not in text.lower()
     assert "animation_work" not in text
+
+
+def test_live_data_seam_is_one_way() -> None:
+    header = LIVE_DATA_H.read_text()
+    glue = LIVE_DATA_C.read_text()
+    status = STATUS_C.read_text()
+
+    # The protocol module declares nothing the renderer has to define, so it
+    # links without the renderer.
+    for source in (header, glue, status):
+        assert "keypoint_live_data_refresh_displays" not in source
+
+    # LiveData publishes; consumers subscribe.
+    assert "typedef void (*keypoint_live_data_listener_t)(enum keypoint_live_data_change change);" in header
+    assert "void keypoint_live_data_subscribe(keypoint_live_data_listener_t listener);" in header
+    assert "KEYPOINT_LIVE_DATA_CHANGE_REFRESH" in header
+    assert "KEYPOINT_LIVE_DATA_CHANGE_GENERATION" in header
+
+    # Fixed-size subscriber table, loud on overflow, and subscribers still run
+    # on the display work queue where the refresh used to be submitted.
+    assert "#define KEYPOINT_LIVE_DATA_LISTENER_MAX" in glue
+    assert "LOG_ERR(" in glue
+    assert "k_work_submit_to_queue(zmk_display_work_q(), &live_data_notify_work)" in glue
+
+    # The renderer registers its own repaint.
+    assert "keypoint_live_data_subscribe(live_data_changed)" in status
+
+
+def test_attention_level_is_folded_by_the_pure_core() -> None:
+    header = LIVE_DATA_H.read_text()
+    core = LIVE_DATA_CORE_C.read_text()
+
+    assert "enum keypoint_live_data_attention attention;" in header
+    # Every level is a distinct blink pattern on the device; merging two is a
+    # silent regression, so the enum spells all of them out.
+    for level in (
+        "IDLE",
+        "NO_DATA",
+        "HEARTBEAT_SINGLE",
+        "HEARTBEAT_DOUBLE",
+        "ACTIVE",
+        "CAUTION",
+        "ATTENTION",
+        "WARNING",
+        "STALE",
+        "ERROR",
+    ):
+        assert f"KEYPOINT_LIVE_DATA_ATTENTION_{level}" in header
+
+    # Folded in the host-testable core -- pure math over hint, staleness, icon.
+    assert "snapshot.attention = attention_for(&snapshot);" in core
+    assert "KEYPOINT_LIVE_DATA_ICON_CLAUDE" in core
+    assert "KEYPOINT_LIVE_DATA_ICON_CODEX" in core
+    assert "KEYPOINT_LIVE_DATA_ICON_WARN" in core
 
 
 def test_live_data_page_navigation_listener() -> None:
@@ -190,11 +304,23 @@ def test_live_data_schedules_stale_refresh() -> None:
 
 
 def test_live_data_compiled_for_central_lpm_view() -> None:
-    text = CMAKE.read_text()
+    cmake = CMAKE.read_text()
+    kconfig = KCONFIG.read_text()
+    left_cmake = LEFT_CMAKE.read_text()
 
-    assert "widgets/live_data.c" in text
-    assert "widgets/live_data_core.c" in text
-    assert "NOT CONFIG_ZMK_SPLIT OR CONFIG_ZMK_SPLIT_ROLE_CENTRAL" in text
+    assert "widgets/live_data.c" in cmake
+    assert "widgets/live_data_core.c" in cmake
+
+    # One statement of the condition: a Kconfig symbol the build and every #if
+    # site reference, rather than four independent spellings.
+    assert "config KEYPOINT_LIVE_DATA" in kconfig
+    assert "default y if ZMK_DISPLAY && NICE_VIEW_WIDGET_STATUS && (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)" in kconfig
+    assert "if(CONFIG_KEYPOINT_LIVE_DATA)" in cmake
+    assert "NOT CONFIG_ZMK_SPLIT OR CONFIG_ZMK_SPLIT_ROLE_CENTRAL" not in cmake
+
+    # The contract header reaches the left shield by include path, not by a
+    # relative reach from the source file.
+    assert "zephyr_library_include_directories(../lpm_view/widgets)" in left_cmake
 
 
 def test_status_uses_live_data_instead_of_wpm_chart() -> None:
@@ -281,11 +407,12 @@ def test_live_data_splits_lines_between_top_and_middle_canvas() -> None:
     assert "lv_canvas_draw_line(" not in text
 
     middle_start = text.index("static void draw_middle(")
-    middle_end = text.index("void keypoint_live_data_refresh_displays(", middle_start)
+    middle_end = text.index("static void live_data_changed(", middle_start)
     middle = text[middle_start:middle_end]
     assert "draw_live_data_extra(" in middle
 
-    refresh_start = text.index("void keypoint_live_data_refresh_displays(")
+    # Both canvases carry live data, so the subscribed repaint redraws both.
+    refresh_start = text.index("static void live_data_changed(")
     refresh_end = text.index("static void set_battery_status(", refresh_start)
     refresh = text[refresh_start:refresh_end]
     assert "draw_top(widget->obj, widget->cbuf, &widget->state);" in refresh
@@ -473,16 +600,27 @@ def test_live_data_stale_keeps_last_payload_text() -> None:
     assert "snapshot.stale" in core
 
 
-def test_demo_sender_uses_same_limits() -> None:
-    text = SENDER.read_text()
+def test_demo_sender_declares_no_contract_of_its_own() -> None:
+    """The demo consumes kp3; a second copy of the grammar is how they drift.
 
-    assert "TEXT_LINE_COUNT = 6" in text
-    assert "LINE_MAX = 9" in text
-    assert "GENERATION_FIELD_MAX = 2" in text
-    assert "LED_HINT_IDS" in text
-    assert "ICON_IDS" in text
-    assert 'PREFIX = "KP3|"' in text
-    assert 'CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"' in text
+    Nothing here restates a limit: the forbidden names and the deck ceiling
+    both come out of kp3, which derives them from live_data.h at import.
+    """
+    module = sender_ast()
+    contract_names = {name for name in vars(kp3) if name.isupper()}
+
+    assert "kp3" in {alias.name for node in module.body if isinstance(node, ast.Import) for alias in node.names}
+    assert not module_assigned_names(module) & contract_names
+    assert not {name for name in vars(demo_cards) if name.isupper()} & contract_names
+    assert 1 <= module_constants(module)["DEMO_DECK_SIZE"] <= kp3.PAGE_MAX
+
+
+def test_demo_sender_uuids_match_the_firmware_service() -> None:
+    firmware = LIVE_DATA_C.read_text()
+    constants = module_constants(sender_ast())
+
+    for name in ("SERVICE_UUID", "CHAR_UUID"):
+        assert constants[name] in firmware
 
 
 def test_a320_touch_and_i2c_paths_are_fail_fast_without_capslock_mode() -> None:
@@ -518,40 +656,73 @@ def test_demo_sender_uses_data_time_not_send_time() -> None:
     assert "with_current_time" not in text
 
 
-def test_demo_sender_exercises_diverse_icon_data() -> None:
-    text = SENDER.read_text()
+def test_demo_cards_cover_every_icon_the_firmware_accepts() -> None:
+    """A demo run has to exercise the whole icon enum, not a stale subset."""
+    assert {source.icon for source in demo_cards.DEFAULT_DEMO_SOURCES} == set(kp3.ICON_NAMES)
+    assert len(demo_cards.DEFAULT_DEMO_SOURCES) >= 16
 
-    for icon in ("NONE", "SUN", "CLOUD", "RAIN", "TEMP", "WARN", "CODE", "TIME", "CODEX", "CLAUDE"):
-        assert f'icon="{icon}"' in text
 
-    assert text.count("DemoSource(") >= 16
-    assert '"MAX9CHARS"' in text
-    assert '"ABCDEFGHI"' in text
-    # Demo lines exploit the monospace grid: padded label/value columns.
-    assert "def kv(" in text
-    assert "def title(" in text
+def test_every_demo_card_builds_a_frame_the_firmware_would_accept() -> None:
+    """The cards are checked as frames, not as source text.
+
+    Each card is pushed at the widest page coordinates the deck allows, so a
+    card that only fits on page 0 of a single-page deck still fails here.
+    """
+    for index, source in enumerate(demo_cards.DEFAULT_DEMO_SOURCES):
+        frame = demo_cards.card_frame(
+            source,
+            "23:59",
+            generation=0xFF,
+            idx=index % kp3.PAGE_MAX,
+            total=kp3.PAGE_MAX,
+        )
+        parsed = kp3.parse(frame)
+        assert parsed.icon == source.icon
+        assert parsed.led_hint == source.led_hint
+        assert parsed.led_hint in kp3.LED_CODES
+
+
+def test_grid_probe_card_fills_every_line_edge_to_edge() -> None:
+    """The one card that proves the glass renders a full character grid."""
+    probe = demo_cards.grid_probe_source()
+    lines = (probe.line1, probe.line2, probe.extra1, probe.extra2, probe.extra3)
+
+    assert len(lines) == kp3.TEXT_LINE_COUNT - 1  # the sixth line is the timestamp
+    assert {len(line) for line in lines} == {kp3.LINE_MAX}
+    assert len(set(lines)) == len(lines)
 
 
 def test_demo_sender_randomizes_dynamic_mock_data_by_default() -> None:
+    """The CLI wiring is source text (typer is not installed in CI); what the
+    generators actually produce is checked as values."""
     text = SENDER.read_text()
 
-    assert "import random" in text
-    assert "DEMO_GENERATORS" in text
-    assert "random_demo_source(" in text
     assert "randomize: bool = typer.Option(True" in text
     assert '"--random/--sequential"' in text
     assert "source_interval: float = typer.Option(2.0" in text
 
-    for generator_name in (
-        "random_sun_source",
-        "random_cloud_source",
-        "random_rain_source",
-        "random_temp_source",
-        "random_warn_source",
-        "random_codex_source",
-        "random_claude_source",
-    ):
-        assert generator_name in text
+    rng = random.Random(1337)
+    previous = None
+    icons = set()
+    for _ in range(2000):
+        source = demo_cards.random_demo_source(rng=rng, previous=previous)
+        assert source != previous  # consecutive cards differ, so the glass visibly moves
+        kp3.parse(demo_cards.card_frame(source, "12:00", generation=0, idx=0, total=1))
+        icons.add(source.icon)
+        previous = source
+
+    assert icons == set(kp3.ICON_NAMES)
+
+
+def test_sequential_demo_decks_walk_the_default_cards_in_order() -> None:
+    deck = demo_cards.demo_deck(
+        source_iter=iter(demo_cards.DEFAULT_DEMO_SOURCES),
+        rng=random.Random(0),
+        randomize=False,
+        size=kp3.PAGE_MAX,
+    )
+
+    assert deck == list(demo_cards.DEFAULT_DEMO_SOURCES[: kp3.PAGE_MAX])
 
 
 def test_demo_sender_can_resolve_macos_connected_keyboard() -> None:
@@ -560,3 +731,18 @@ def test_demo_sender_can_resolve_macos_connected_keyboard() -> None:
     assert "retrieveConnectedPeripheralsWithServices_" in text
     assert "CentralManagerDelegate" in text
     assert "BLEDevice" in text
+
+
+def test_diagnose_probe_frame_is_built_by_kp3_at_runtime() -> None:
+    """A frozen probe would drift past the grammar it is meant to test.
+
+    The script exists to tell "the firmware is stale" apart from "the producer
+    is stale"; a hardcoded frame quietly turns every run into the second.
+    """
+    text = DIAGNOSE.read_text()
+    module = ast.parse(text)
+
+    assert "kp3.build_frame(" in text
+    assert not [node for node in ast.walk(module) if isinstance(node, ast.Constant) and isinstance(node.value, bytes)]
+    # Writing *with* response is the whole point: it surfaces the GATT verdict.
+    assert "response=True" in text

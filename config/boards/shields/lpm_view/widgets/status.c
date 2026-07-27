@@ -340,7 +340,11 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     rotate_canvas(canvas, cbuf);
 }
 
-void keypoint_live_data_refresh_displays(void) {
+/* Subscribed to LiveData in zmk_widget_status_init(). Both canvases carry live
+ * data, so any change repaints both regardless of what changed. */
+static void live_data_changed(enum keypoint_live_data_change change) {
+    ARG_UNUSED(change);
+
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
@@ -464,7 +468,14 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_t *middle = lv_canvas_create(widget->obj);
     lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 68, 0);
     lv_canvas_set_buffer(middle, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
+
+    /* One subscription covers every widget on the list, so register on the
+     * first init only. */
+    if (sys_slist_is_empty(&widgets)) {
+        keypoint_live_data_subscribe(live_data_changed);
+    }
     sys_slist_append(&widgets, &widget->node);
+
     widget_battery_status_init();
     widget_output_status_init();
     widget_layer_status_init();

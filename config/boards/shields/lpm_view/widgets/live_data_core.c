@@ -217,6 +217,43 @@ bool keypoint_live_data_core_store(struct keypoint_live_data_deck *deck, uint8_t
     return true;
 }
 
+/* Fold LED hint, staleness and icon emphasis into the one LED semantic. An
+ * explicit hint always wins; an unhinted card falls back to what its icon says
+ * about itself. Icons with nothing to say leave the LED dark. */
+static enum keypoint_live_data_attention
+attention_for(const struct keypoint_live_data_snapshot *snapshot) {
+    if (!snapshot->has_data) {
+        return KEYPOINT_LIVE_DATA_ATTENTION_NO_DATA;
+    }
+    if (snapshot->stale) {
+        return KEYPOINT_LIVE_DATA_ATTENTION_STALE;
+    }
+
+    switch (snapshot->led_hint) {
+    case KEYPOINT_LIVE_DATA_LED_HINT_ERROR:
+        return KEYPOINT_LIVE_DATA_ATTENTION_ERROR;
+    case KEYPOINT_LIVE_DATA_LED_HINT_WARNING:
+        return KEYPOINT_LIVE_DATA_ATTENTION_WARNING;
+    case KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION:
+        return KEYPOINT_LIVE_DATA_ATTENTION_ATTENTION;
+    case KEYPOINT_LIVE_DATA_LED_HINT_ACTIVE:
+        return KEYPOINT_LIVE_DATA_ATTENTION_ACTIVE;
+    case KEYPOINT_LIVE_DATA_LED_HINT_NONE:
+        break;
+    }
+
+    switch (snapshot->icon) {
+    case KEYPOINT_LIVE_DATA_ICON_CLAUDE:
+        return KEYPOINT_LIVE_DATA_ATTENTION_HEARTBEAT_SINGLE;
+    case KEYPOINT_LIVE_DATA_ICON_CODEX:
+        return KEYPOINT_LIVE_DATA_ATTENTION_HEARTBEAT_DOUBLE;
+    case KEYPOINT_LIVE_DATA_ICON_WARN:
+        return KEYPOINT_LIVE_DATA_ATTENTION_CAUTION;
+    default:
+        return KEYPOINT_LIVE_DATA_ATTENTION_IDLE;
+    }
+}
+
 struct keypoint_live_data_snapshot
 keypoint_live_data_core_snapshot(const struct keypoint_live_data_deck *deck, int64_t now_ms) {
     struct keypoint_live_data_snapshot snapshot = {};
@@ -239,6 +276,8 @@ keypoint_live_data_core_snapshot(const struct keypoint_live_data_deck *deck, int
         strcpy(snapshot.lines[0], "NO DATA");
         strcpy(snapshot.lines[1], "WAITING");
     }
+
+    snapshot.attention = attention_for(&snapshot);
 
     return snapshot;
 }

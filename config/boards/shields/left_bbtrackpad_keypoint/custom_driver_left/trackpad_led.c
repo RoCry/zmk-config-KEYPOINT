@@ -9,6 +9,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/led.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
 #include <zmk/activity.h>
@@ -17,17 +18,7 @@
 
 #include "trackpad_led.h"
 #include "a320.h"
-
-#if IS_ENABLED(CONFIG_ZMK_DISPLAY) && IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_STATUS)
-#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-#define TRACKPAD_LED_HAS_LIVE_DATA 1
-#include "../../lpm_view/widgets/live_data.h"
-#endif
-#endif
-
-#ifndef TRACKPAD_LED_HAS_LIVE_DATA
-#define TRACKPAD_LED_HAS_LIVE_DATA 0
-#endif
+#include "live_data.h"
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -69,14 +60,6 @@ static uint8_t current_led_brt;
 static int64_t preview_until_ms;
 static int64_t usb_confirm_start_ms = -USB_CONFIRM_MS;
 
-#if TRACKPAD_LED_HAS_LIVE_DATA
-static int64_t next_live_refresh_ms;
-static int64_t live_confirm_start_ms = -LIVE_CONFIRM_MS;
-static struct keypoint_live_data_snapshot live_snapshot;
-static uint8_t live_generation;
-static bool live_generation_seen;
-#endif
-
 static void set_led_brightness(uint8_t level) {
     level = MIN(level, BRT_MAX);
     if (current_led_brt == level) {
@@ -112,44 +95,96 @@ static bool burst_active(int64_t elapsed_ms, int32_t period_ms, int32_t duration
     return false;
 }
 
+/*
+ * Live data. LiveData publishes; this module subscribes and renders. All it
+ * knows is attention level -> blink pattern: no icons, no staleness, no
+ * generation arithmetic. Adding an icon never touches this file.
+ *
+ * CONFIG_KEYPOINT_LIVE_DATA (see lpm_view/Kconfig.defconfig) states once
+ * whether live data is compiled in at all; this is the file's only #if.
+ */
+#if IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA)
+
+static enum keypoint_live_data_attention live_attention;
+static int64_t next_live_refresh_ms;
+static int64_t live_confirm_start_ms = -LIVE_CONFIRM_MS;
+/* Raised on the display work queue, consumed by the polling handler, so the
+ * int64 timestamps above stay single-threaded. */
+static atomic_t live_confirm_pending;
+
+static void live_data_changed(enum keypoint_live_data_change change) {
+    if (change == KEYPOINT_LIVE_DATA_CHANGE_GENERATION) {
+        atomic_set(&live_confirm_pending, 1);
+    }
+}
+
+static void live_data_poll(int64_t now_ms) {
+    if (atomic_cas(&live_confirm_pending, 1, 0)) {
+        live_confirm_start_ms = now_ms;
+        next_live_refresh_ms = now_ms; /* blink the new deck's level, not the old one */
+    }
+
+    if (now_ms < next_live_refresh_ms) {
+        return;
+    }
+
+    live_attention = keypoint_live_data_snapshot_get().attention;
+    next_live_refresh_ms = now_ms + LIVE_REFRESH_MS;
+}
+
 static uint8_t live_data_level_at(int64_t now_ms) {
-#if TRACKPAD_LED_HAS_LIVE_DATA
-    if (!live_snapshot.has_data) {
-        return burst_active(now_ms, 60000, 60, 1) ? BRT_MIN : 0;
+    /* A freshly arrived deck confirms itself before the steady pattern resumes. */
+    int64_t confirm_elapsed_ms = now_ms - live_confirm_start_ms;
+    if (confirm_elapsed_ms >= 0 && confirm_elapsed_ms < LIVE_CONFIRM_MS) {
+        return burst_active(confirm_elapsed_ms, LIVE_CONFIRM_MS, 70, 1) ? BRT_ATTENTION : 0;
     }
 
-    if (live_snapshot.stale) {
-        return burst_active(now_ms, 30000, 80, 3) ? BRT_WARNING : 0;
-    }
-
-    switch (live_snapshot.led_hint) {
-    case KEYPOINT_LIVE_DATA_LED_HINT_ERROR:
+    switch (live_attention) {
+    case KEYPOINT_LIVE_DATA_ATTENTION_ERROR:
         return burst_active(now_ms, 1800, 100, 3) ? BRT_MAX : 0;
-    case KEYPOINT_LIVE_DATA_LED_HINT_WARNING:
+    case KEYPOINT_LIVE_DATA_ATTENTION_STALE:
+        return burst_active(now_ms, 30000, 80, 3) ? BRT_WARNING : 0;
+    case KEYPOINT_LIVE_DATA_ATTENTION_WARNING:
         return burst_active(now_ms, 3000, 100, 2) ? BRT_WARNING : 0;
-    case KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION:
+    case KEYPOINT_LIVE_DATA_ATTENTION_CAUTION:
+        return burst_active(now_ms, 4000, 100, 2) ? BRT_WARNING : 0;
+    case KEYPOINT_LIVE_DATA_ATTENTION_ATTENTION:
         return burst_active(now_ms, 2500, 120, 1) ? BRT_ATTENTION : 0;
-    case KEYPOINT_LIVE_DATA_LED_HINT_ACTIVE:
+    case KEYPOINT_LIVE_DATA_ATTENTION_ACTIVE:
         return burst_active(now_ms, 5000, 80, 1) ? BRT_STATUS : 0;
-    case KEYPOINT_LIVE_DATA_LED_HINT_NONE:
+    case KEYPOINT_LIVE_DATA_ATTENTION_HEARTBEAT_SINGLE:
+        return burst_active(now_ms, 9000, 80, 1) ? BRT_STATUS : 0;
+    case KEYPOINT_LIVE_DATA_ATTENTION_HEARTBEAT_DOUBLE:
+        return burst_active(now_ms, 9000, 70, 2) ? BRT_STATUS : 0;
+    case KEYPOINT_LIVE_DATA_ATTENTION_NO_DATA:
+        return burst_active(now_ms, 60000, 60, 1) ? BRT_MIN : 0;
+    case KEYPOINT_LIVE_DATA_ATTENTION_IDLE:
         break;
     }
 
-    switch (live_snapshot.icon) {
-    case KEYPOINT_LIVE_DATA_ICON_CLAUDE:
-        return burst_active(now_ms, 9000, 80, 1) ? BRT_STATUS : 0;
-    case KEYPOINT_LIVE_DATA_ICON_CODEX:
-        return burst_active(now_ms, 9000, 70, 2) ? BRT_STATUS : 0;
-    case KEYPOINT_LIVE_DATA_ICON_WARN:
-        return burst_active(now_ms, 4000, 100, 2) ? BRT_WARNING : 0;
-    default:
-        return 0;
-    }
+    return 0;
+}
+
+static void live_data_init(void) {
+    next_live_refresh_ms = 0;
+    live_confirm_start_ms = -LIVE_CONFIRM_MS;
+    atomic_clear(&live_confirm_pending);
+    live_attention = keypoint_live_data_snapshot_get().attention;
+    keypoint_live_data_subscribe(live_data_changed);
+}
+
 #else
+
+static void live_data_poll(int64_t now_ms) { ARG_UNUSED(now_ms); }
+
+static uint8_t live_data_level_at(int64_t now_ms) {
     ARG_UNUSED(now_ms);
     return 0;
-#endif
 }
+
+static void live_data_init(void) {}
+
+#endif /* CONFIG_KEYPOINT_LIVE_DATA */
 
 static uint8_t led_level_at(int64_t now_ms) {
     if (touch_active || now_ms < preview_until_ms) {
@@ -161,35 +196,7 @@ static uint8_t led_level_at(int64_t now_ms) {
         return burst_active(usb_elapsed_ms, USB_CONFIRM_MS, 90, 2) ? BRT_MAX : 0;
     }
 
-#if TRACKPAD_LED_HAS_LIVE_DATA
-    int64_t live_confirm_elapsed_ms = now_ms - live_confirm_start_ms;
-    if (live_confirm_elapsed_ms >= 0 && live_confirm_elapsed_ms < LIVE_CONFIRM_MS) {
-        return burst_active(live_confirm_elapsed_ms, LIVE_CONFIRM_MS, 70, 1) ? BRT_ATTENTION : 0;
-    }
-#endif
-
     return live_data_level_at(now_ms);
-}
-
-static void refresh_live_snapshot_if_due(int64_t now_ms) {
-#if TRACKPAD_LED_HAS_LIVE_DATA
-    if (now_ms < next_live_refresh_ms) {
-        return;
-    }
-
-    struct keypoint_live_data_snapshot snapshot = keypoint_live_data_snapshot_get();
-    if (snapshot.has_data &&
-        (!live_generation_seen || snapshot.generation != live_generation)) {
-        live_generation_seen = true;
-        live_generation = snapshot.generation;
-        live_confirm_start_ms = now_ms;
-    }
-
-    live_snapshot = snapshot;
-    next_live_refresh_ms = now_ms + LIVE_REFRESH_MS;
-#else
-    ARG_UNUSED(now_ms);
-#endif
 }
 
 static void update_transport(enum zmk_transport transport, int64_t now_ms) {
@@ -258,7 +265,7 @@ static void polling_work_handler(struct k_work *work) {
     update_activity(current_active, current_brt);
     update_touch(current_touch, current_brt, now_ms);
     update_backlight(current_brt, now_ms);
-    refresh_live_snapshot_if_due(now_ms);
+    live_data_poll(now_ms);
 
     set_led_brightness(led_level_at(now_ms));
 
@@ -284,13 +291,7 @@ static int indicator_tp_init(void) {
     keyboard_active = false;
     preview_until_ms = 0;
 
-#if TRACKPAD_LED_HAS_LIVE_DATA
-    next_live_refresh_ms = 0;
-    live_generation_seen = false;
-    live_generation = 0;
-    live_confirm_start_ms = -LIVE_CONFIRM_MS;
-    live_snapshot = keypoint_live_data_snapshot_get();
-#endif
+    live_data_init();
 
     if (selected_transport == ZMK_TRANSPORT_USB) {
         usb_confirm_start_ms = k_uptime_get();

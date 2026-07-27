@@ -38,6 +38,13 @@ config NICE_VIEW_WIDGET_STATUS
 config NICE_VIEW_WIDGET_INVERTED
     bool "Invert custom status widget colors"
 
+# The one statement of "live data is compiled in". CMake selects the LiveData
+# sources on it and every #if site tests IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA);
+# it is undefined (and so false) in builds without this shield.
+config KEYPOINT_LIVE_DATA
+    bool
+    default y if ZMK_DISPLAY && NICE_VIEW_WIDGET_STATUS && (!ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL)
+
 if !ZMK_SPLIT || ZMK_SPLIT_ROLE_CENTRAL
 
 config NICE_VIEW_WIDGET_STATUS

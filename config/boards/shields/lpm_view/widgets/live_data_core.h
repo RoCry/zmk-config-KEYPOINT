@@ -54,8 +54,8 @@ bool keypoint_live_data_core_store(struct keypoint_live_data_deck *deck, uint8_t
                                              [KEYPOINT_LIVE_DATA_LINE_MAX + 1],
                                    int64_t now_ms);
 
-/* Read model for the page in view, including the NO DATA fallback and the
- * staleness verdict at `now_ms`. */
+/* Read model for the page in view: the NO DATA fallback, the staleness verdict
+ * at `now_ms`, and the attention level those fold into. */
 struct keypoint_live_data_snapshot
 keypoint_live_data_core_snapshot(const struct keypoint_live_data_deck *deck, int64_t now_ms);
 
