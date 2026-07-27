@@ -36,7 +36,7 @@ layers:
   - ''
   - ''
   - '&mkp LCLK'
-  - '&mkp MB3'
+  - '&mkp RCLK'
   - N
   - M
   - ','
@@ -53,7 +53,7 @@ layers:
   - {t: BSPC, h: SYMBOL}
   - {t: TAB, h: RSHFT}
   - {t: RALT, h: Meh+LGUI}
-  - Ctl+UP
+  - PP
   - {t: LEFT, h: LOWER}
   - {t: DOWN, h: SYMBOL}
   - {t: RIGHT, h: FN}
@@ -103,7 +103,7 @@ layers:
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - '&bootloader'
+  - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: FN, type: held}
@@ -167,7 +167,7 @@ layers:
   - {t: BSPC, type: held}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
-  - '&bootloader'
+  - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
   - {t: ▽, type: trans}
@@ -188,7 +188,7 @@ layers:
   - VOL DN
   - VOL UP
   - MUTE
-  - PLAY
+  - PP
   - ''
   - '&mkp LCLK'
   - '&mkp RCLK'
@@ -217,14 +217,14 @@ layers:
   - {t: BT, h: '2'}
   - ''
   - ''
+  - '&bootloader'
   - ''
   - ''
   - ''
   - ''
   - ''
   - ''
-  - ''
-  - ''
+  - '&bootloader'
   - ''
   - ''
   - {type: held}
