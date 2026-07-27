@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 from pathlib import Path
 
+import keypoint_lvgl_sim as sim
 import kp3
 import pytest
 from PIL import Image
@@ -33,22 +34,6 @@ STATE = preview.StatusState(
 )
 
 
-# Glass-pixel positions of logical canvas pixels, following the simulated
-# pipeline (fixed-point -90 deg canvas rotation + lpm009m360a rotation=1):
-# top-canvas col c -> glass x (c<=36: c, else c+1), row r -> glass y
-# (r<=35: r+1, else r+2); middle-canvas rows land 68 glass rows lower.
-def glass_x(col: int) -> int:
-    return col if col <= 36 else col + 1
-
-
-def glass_y_top(row: int) -> int:
-    return row + 1 if row <= 35 else row + 2
-
-
-def glass_y_middle(row: int) -> int:
-    return row + 69 if row <= 35 else row + 70
-
-
 def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         output_dir = Path(tmp)
@@ -62,7 +47,7 @@ def test_write_preview_set_writes_portrait_glass_screenshots() -> None:
         for path in written:
             with Image.open(path) as image:
                 assert image.mode == "L"
-                assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
+                assert image.size == (sim.GLASS.width * 2, sim.GLASS.height * 2)
 
 
 def test_write_preview_set_regenerates_the_whole_directory() -> None:
@@ -86,7 +71,7 @@ def test_write_frame_preview_renders_and_validates_producer_frames() -> None:
         output = Path(tmp) / "frame.png"
         assert preview.write_frame_preview(FRESH_FRAME, output, scale=2) == output
         with Image.open(output) as image:
-            assert image.size == (preview.GLASS_WIDTH * 2, preview.GLASS_HEIGHT * 2)
+            assert image.size == (sim.GLASS.width * 2, sim.GLASS.height * 2)
 
         with pytest.raises(ValueError):
             preview.write_frame_preview("KP2|SUN|TOO|FEW|FIELDS", Path(tmp) / "bad.png")
@@ -179,9 +164,9 @@ def test_stale_data_stays_readable_with_segmented_health_strip() -> None:
 
 def test_health_strip_is_visible_on_glass() -> None:
     glass = preview.render_left_screen(STATE, FRESH_FRAME)
-    health_row = glass_y_middle(preview.LAYOUT.live_health_y)
-    assert glass.getpixel((glass_x(2), health_row)) == preview.BLACK
-    assert glass.getpixel((glass_x(60), health_row)) == preview.BLACK
+    health_y = preview.LAYOUT.live_health_y
+    for col in (2, 60):
+        assert glass.getpixel(sim.glass_pixel("middle", col, health_y)) == preview.BLACK
 
 
 def test_live_text_is_right_aligned_like_firmware() -> None:
@@ -273,17 +258,41 @@ def test_layer_info_text_matches_status_info_panel() -> None:
     assert preview.layer_info_text(with_layer(1, "ABCDEFGHIJKLMNOPQ")) == "ABCDEFGHIJKLMNO"
 
 
+def test_glass_pixel_probe_is_hand_derived_on_purpose() -> None:
+    # The one place in this suite that states the canvas -> glass transform
+    # itself. Every other glass assertion asks sim.glass_pixel(), which probes
+    # the real composition -- without this probe the suite would only ever check
+    # the transform by re-applying it, and a wrong rotation would stay green.
+    #
+    # Worked out by hand from the firmware, for the top-left corner of the
+    # battery shell (util.c draw_battery fills 29x12 from top canvas (0, 2), so
+    # canvas (0, 2) is set and canvas (0, 1) right above it is background):
+    #   1. rotate_canvas() turns the 72x72 canvas -90 deg about (36, 35), so
+    #      canvas row r lands in screen column r + 1 (r <= 35; the fixed-point
+    #      sampling doubles row 35 and drops the last two rows) and canvas
+    #      column c lands in screen row 71 - c (c <= 36)
+    #      -> canvas (col 0, row 2) is at LVGL screen (x=3, y=71).
+    #   2. the top canvas is aligned at the screen origin, so no offset applies.
+    #   3. lpm009m360a rotation=1 plus the panel's mounting show screen (x, y)
+    #      at glass (71 - y, x) -> glass (0, 3), with canvas (0, 1) at glass
+    #      (0, 2) directly above it.
+    glass = preview.render_left_screen(STATE, FRESH_FRAME)
+    assert glass.getpixel((0, 3)) == preview.BLACK
+    assert glass.getpixel((0, 2)) == preview.WHITE
+
+
 def test_glass_orientation_battery_top_profiles_bottom() -> None:
+    # Where each canvas pixel lands is the sim's answer to give (glass_pixel
+    # probes the composition); what this pins is which block ends up where.
     glass = preview.render_left_screen(STATE, FRESH_FRAME)
 
     # Battery shell outline pixel: logical top canvas (0, 2).
-    assert glass.getpixel((glass_x(0), glass_y_top(2))) == preview.BLACK
+    assert glass.getpixel(sim.glass_pixel("top", 0, 2)) == preview.BLACK
     # Active profile slot fill: logical middle canvas (2, KEYPOINT_PROFILE_ROW_Y).
-    row_y = preview.LAYOUT.profile_row_y
-    assert glass.getpixel((glass_x(2), glass_y_middle(row_y))) == preview.BLACK
+    assert glass.getpixel(sim.glass_pixel("middle", 2, preview.LAYOUT.profile_row_y)) == preview.BLACK
     # Layer text band near the glass bottom has ink.
-    layer_band = (0, glass_y_middle(preview.LAYOUT.layer_text_y), 72, 144)
-    assert min(glass.crop(layer_band).tobytes()) == preview.BLACK
+    _, layer_top = sim.glass_pixel("middle", 0, preview.LAYOUT.layer_text_y)
+    assert min(glass.crop((0, layer_top, sim.GLASS.width, sim.GLASS.height)).tobytes()) == preview.BLACK
 
 
 def test_glass_seam_rows_stay_blank() -> None:

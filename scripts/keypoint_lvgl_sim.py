@@ -9,9 +9,14 @@ firmware (ZMK v0.3.0 -> Zephyr 3.5 -> LVGL 8.3):
   left/center/right alignment;
 - lines: lv_canvas_draw_line() horizontal lines exclude the end pixel;
 - rotation: lv_canvas_transform() fixed-point math (sin 90 deg = 32767 >> 5),
-  including its resampling artifacts (center row/col doubled, last dropped).
+  including its resampling artifacts (center row/col doubled, last dropped);
+- glass: the canvas -> glass transform (rotate both canvases, align them on the
+  LVGL screen, map that screen through the panel). It lives here once, and
+  glass_pixel() answers "where does this canvas pixel land?" by probing it, so
+  no caller ever restates it. Its geometry is parsed from the firmware.
 """
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -191,3 +196,142 @@ def rotate_canvas(canvas: Canvas) -> Canvas:
             if 0 <= xs_int < size and 0 <= ys_int < size:
                 dst[x, y] = src[xs_int, ys_int]
     return out
+
+
+# ---------------------------------------------------------------------------
+# Glass: canvas -> screen -> panel, derived from the firmware sources
+# ---------------------------------------------------------------------------
+
+_SHIELD_DIR = _SCRIPT_DIR.parent / "config/boards/shields/lpm_view"
+
+CanvasName = Literal["top", "middle"]
+
+
+def _firmware_source(relative: str) -> str:
+    return (_SHIELD_DIR / relative).read_text()
+
+
+def _require(pattern: str, relative: str, what: str) -> re.Match[str]:
+    """Read one value out of the firmware, or fail: the glass geometry has no
+    fallback literal to drift back to."""
+    match = re.search(pattern, _firmware_source(relative), re.S)
+    if match is None:
+        raise ValueError(f"{what} not found in {relative}: the glass geometry cannot be derived")
+    return match
+
+
+@dataclass(frozen=True, slots=True)
+class GlassGeometry:
+    """Everything the canvas -> glass transform needs, read from the firmware."""
+
+    canvas_size: int  # CANVAS_SIZE, widgets/util.h
+    screen_width: int  # the LVGL screen, i.e. the panel's own landscape geometry
+    screen_height: int
+    middle_offset: tuple[int, int]  # lv_obj_align(middle, LV_ALIGN_TOP_LEFT, x, y)
+
+    @property
+    def width(self) -> int:
+        """Glass pixels across. The panel is mounted turned on its side, so the
+        glass is the LVGL screen transposed: 72 wide by 144 tall."""
+        return self.screen_height
+
+    @property
+    def height(self) -> int:
+        return self.screen_width
+
+
+def _parse_glass_geometry() -> GlassGeometry:
+    canvas_size = int(_require(r"#define\s+CANVAS_SIZE\s+(\d+)", "widgets/util.h", "CANVAS_SIZE").group(1))
+
+    node = _require(
+        r'compatible\s*=\s*"jdi,lpm009m360a";(.*?)\};', "lpm_view.overlay", "the lpm009m360a display node"
+    ).group(1)
+    panel = {
+        prop: int(match.group(1))
+        for prop in ("width", "height", "rotation")
+        if (match := re.search(rf"\b{prop}\s*=\s*<(\d+)>", node))
+    }
+    if missing := [prop for prop in ("width", "height", "rotation") if prop not in panel]:
+        raise ValueError(f"display node in lpm_view.overlay has no {missing}: the glass geometry cannot be derived")
+    if panel["rotation"] != 1:
+        raise ValueError(f"display rotation is {panel['rotation']}: only the rotation=1 panel mapping is simulated")
+
+    # The driver's line buffer is the same geometry seen from the panel side:
+    # `width` lines of `height` bits. Disagreement means one of the two moved.
+    bytes_per_line, lines = (
+        int(value)
+        for value in _require(
+            r"uint8_t\s+buf\[(\d+)\s*\*\s*(\d+)\]", "display_driver/lpm009m360a.c", "the panel line buffer"
+        ).groups()
+    )
+    if (lines, bytes_per_line * 8) != (panel["width"], panel["height"]):
+        raise ValueError(
+            f"lpm009m360a.c line buffer ({lines} lines of {bytes_per_line * 8} px) disagrees with the "
+            f"devicetree geometry ({panel['width']}x{panel['height']})"
+        )
+
+    align = _require(
+        r"lv_obj_align\(middle,\s*LV_ALIGN_TOP_LEFT,\s*(-?\d+),\s*(-?\d+)\)",
+        "widgets/status.c",
+        "the middle canvas alignment",
+    )
+    return GlassGeometry(
+        canvas_size=canvas_size,
+        screen_width=panel["width"],
+        screen_height=panel["height"],
+        middle_offset=(int(align.group(1)), int(align.group(2))),
+    )
+
+
+GLASS = _parse_glass_geometry()
+
+
+def _compose_screen(top: Canvas, middle: Canvas) -> Image.Image:
+    """The LVGL screen (status.c zmk_widget_status_init): both canvases rotated,
+    the top one at the origin (LV_ALIGN_BOTTOM_LEFT with a canvas as tall as the
+    screen), the middle one an opaque sibling drawn over the top canvas' tail
+    columns at its own alignment offset."""
+    screen = Image.new("L", (GLASS.screen_width, GLASS.screen_height), WHITE)
+    screen.paste(rotate_canvas(top).image, (0, 0))
+    screen.paste(rotate_canvas(middle).image, GLASS.middle_offset)
+    return screen
+
+
+def compose_glass(top: Canvas, middle: Canvas) -> Image.Image:
+    """Compose the two logical canvases into the portrait image the glass shows.
+
+    lpm009m360a rotation=1 writes LVGL (x, y) to panel line width-1-x, column y;
+    the panel is mounted so content reads upright, which leaves
+    glass(gx, gy) = screen(gy, glass_width - 1 - gx)."""
+    screen = _compose_screen(top, middle)
+    glass = Image.new("L", (GLASS.width, GLASS.height), WHITE)
+    src = screen.load()
+    dst = glass.load()
+    for gy in range(GLASS.height):
+        for gx in range(GLASS.width):
+            dst[gx, gy] = src[gy, GLASS.width - 1 - gx]
+    return glass
+
+
+def glass_pixel(canvas: CanvasName, col: int, row: int) -> tuple[int, int]:
+    """Where canvas pixel (col, row) lands on the glass.
+
+    Probed, not restated: one lit pixel goes through the real compose_glass(),
+    which is then scanned for the ink -- so this cannot disagree with what the
+    preview renders. Rows and columns the rotation samples twice land twice; the
+    first hit (topmost, then leftmost) is returned. Fails fast when the pixel
+    never reaches the glass: the rotation drops the last rows/columns, and the
+    middle canvas covers the top canvas' tail."""
+    size = GLASS.canvas_size
+    if not (0 <= col < size and 0 <= row < size):
+        raise ValueError(f"({col}, {row}) is outside the {size}x{size} canvas")
+    probe = Canvas(size)
+    probe.blend(col, row, BLACK)
+    blank = Canvas(size)
+    glass = compose_glass(probe, blank) if canvas == "top" else compose_glass(blank, probe)
+    pixels = glass.load()
+    for gy in range(glass.height):
+        for gx in range(glass.width):
+            if pixels[gx, gy] == BLACK:
+                return gx, gy
+    raise ValueError(f"{canvas} canvas pixel ({col}, {row}) never reaches the glass")

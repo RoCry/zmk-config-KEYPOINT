@@ -13,20 +13,21 @@ Simulates the firmware rendering pipeline instead of approximating it:
     -> LVGL 1-bit blending (LV_COLOR_DEPTH=1 turns opacity into a >50%
        threshold, which is why the firmware never dims stale data and
        signals staleness via the segmented health strip instead)
-    -> util.c rotate_canvas (LVGL v8 fixed-point -90 deg transform with its
-       resampling artifacts: row/col 36 doubled, last row/col dropped)
-    -> 144x72 LVGL screen composition (the middle canvas overlaps the top
-       canvas' last 4 columns; canvas rows >= 66 never reach the glass)
-    -> lpm009m360a rotation=1 panel mapping: the visible 72x144 portrait
-       image (top block: battery/output/live lines 1-3/icon, bottom block:
-       live lines 4-6, health strip, profiles + layer).
+    -> keypoint_lvgl_sim.compose_glass(): rotation (util.c rotate_canvas with
+       its resampling artifacts), 144x72 screen composition (the middle canvas
+       overlaps the top canvas' last 4 columns; canvas rows >= 66 never reach
+       the glass) and the lpm009m360a rotation=1 panel mapping, giving the
+       visible 72x144 portrait image (top block: battery/output/live lines
+       1-3/icon, bottom block: live lines 4-6, health strip, profiles + layer).
 
 Icon bitmaps and layout constants are parsed from the firmware sources so
 the preview cannot drift from them; the KP3 contract (grammar, parser, card
 builders) comes from kp3.py, which derives it the same way. The LVGL
-renderer behavior lives in keypoint_lvgl_sim.py; exact font glyph tables in
-keypoint_lvgl_fonts.py. Demo cases feed KP3 frames built by kp3 through the
-same parser the firmware uses for the BLE GATT write.
+renderer behavior and the canvas -> glass transform (including the glass
+geometry, also derived from the firmware) live in keypoint_lvgl_sim.py;
+exact font glyph tables in keypoint_lvgl_fonts.py. Demo cases feed KP3
+frames built by kp3 through the same parser the firmware uses for the BLE
+GATT write.
 
 Producers: the KP3 wire protocol and line-layout conventions are documented
 in kp3.py. To check a candidate frame visually, run
@@ -56,20 +57,15 @@ from keypoint_lvgl_sim import (  # noqa: E402
     BLACK,
     FONT_MONTSERRAT_16,
     FONT_UNSCII_8,
+    GLASS,
     WHITE,
     Canvas,
     Indexed2BitImage,
-    rotate_canvas,
+    compose_glass,
 )
 
 ROOT = _SCRIPT_DIR.parent
 WIDGETS_DIR = ROOT / "config/boards/shields/lpm_view/widgets"
-
-LVGL_SCREEN_WIDTH = 144
-LVGL_SCREEN_HEIGHT = 72
-MIDDLE_CANVAS_X = 68  # lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 68, 0) in status.c
-GLASS_WIDTH = 72
-GLASS_HEIGHT = 144
 
 # LV_SYMBOL_* codepoints used by status.c draw_top().
 SYMBOL_USB = ""
@@ -97,9 +93,10 @@ class Layout:
     name lowercased. Declaring them makes the set the preview depends on
     explicit: a define the firmware renames or removes fails the import
     instead of silently rendering at the wrong coordinates.
+
+    Canvas size is not here: it belongs to the glass, so the sim derives it.
     """
 
-    canvas_size: int
     status_profile_count: int
 
     live_icon_size: int
@@ -155,7 +152,7 @@ def _parse_layout() -> Layout:
 
 
 LAYOUT = _parse_layout()
-CANVAS_SIZE = LAYOUT.canvas_size
+CANVAS_SIZE = GLASS.canvas_size
 PROFILE_COUNT = LAYOUT.status_profile_count
 
 
@@ -524,34 +521,16 @@ def draw_middle(state: StatusState, snapshot: LiveDataSnapshot) -> Canvas:
 
 
 # ---------------------------------------------------------------------------
-# Screen composition + glass view
+# Glass rendering
 # ---------------------------------------------------------------------------
 
 
-def render_lvgl_screen(state: StatusState, snapshot: LiveDataSnapshot) -> Image.Image:
-    """The 144x72 LVGL screen: both rotated canvases; the middle canvas is an
-    opaque sibling drawn over the top canvas' last 4 columns."""
-    screen = Image.new("L", (LVGL_SCREEN_WIDTH, LVGL_SCREEN_HEIGHT), WHITE)
-    screen.paste(rotate_canvas(draw_top(state, snapshot)).image, (0, 0))
-    screen.paste(rotate_canvas(draw_middle(state, snapshot)).image, (MIDDLE_CANVAS_X, 0))
-    return screen
-
-
-def glass_view(screen: Image.Image) -> Image.Image:
-    """lpm009m360a rotation=1 maps LVGL (x, y) to panel line 143-x, column y;
-    the panel is mounted so content reads upright: a 72x144 portrait image with
-    glass(gx, gy) = lvgl(gy, 71 - gx). Top block: live data, bottom: profiles."""
-    out = Image.new("L", (GLASS_WIDTH, GLASS_HEIGHT), WHITE)
-    src = screen.load()
-    dst = out.load()
-    for gy in range(GLASS_HEIGHT):
-        for gx in range(GLASS_WIDTH):
-            dst[gx, gy] = src[gy, GLASS_WIDTH - 1 - gx]
-    return out
-
-
 def render_left_screen(state: StatusState, frame: str | None, stale: bool = False) -> Image.Image:
-    return glass_view(render_lvgl_screen(state, live_data_snapshot(frame, stale=stale)))
+    """The portrait glass image: draw both canvases, then hand them to the sim,
+    which owns the canvas -> glass transform (rotation, alignment, panel map).
+    Top block: live data, bottom block: profiles + layer."""
+    snapshot = live_data_snapshot(frame, stale=stale)
+    return compose_glass(draw_top(state, snapshot), draw_middle(state, snapshot))
 
 
 # ---------------------------------------------------------------------------
