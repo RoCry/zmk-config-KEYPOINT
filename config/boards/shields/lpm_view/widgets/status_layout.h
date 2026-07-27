@@ -72,47 +72,14 @@
 #define KEYPOINT_LAYER_TEXT_Y 61
 #define KEYPOINT_LAYER_TEXT_WIDTH 68
 
-static const char icon_sun[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00100100", "00011000", "10111101", "01111110",
-    "01111110", "10111101", "00011000", "00100100",
-};
-
-static const char icon_cloud[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00000000", "00111000", "01111100", "11111110",
-    "11111110", "01111100", "00000000", "00000000",
-};
-
-static const char icon_rain[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00111000", "01111100", "11111110", "01111100",
-    "00000000", "01001000", "10010000", "00100100",
-};
-
-static const char icon_temp[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00110000", "01001000", "01001000", "01001000",
-    "01001000", "10000100", "10000100", "01111000",
-};
-
-static const char icon_warn[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00010000", "00111000", "00111000", "01101100",
-    "01101100", "11111110", "11101110", "11111110",
-};
-
-static const char icon_code[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "10000010", "01000100", "00101000", "00010000",
-    "00101000", "01000100", "10000010", "00010000",
-};
-
-static const char icon_time[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00111100", "01000010", "10010001", "10010001",
-    "10011101", "10000001", "01000010", "00111100",
-};
-
-static const char icon_codex[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00111100", "01011010", "10100101", "10111101",
-    "10111101", "10100101", "01011010", "00111100",
-};
-
-static const char icon_claude[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {
-    "00010000", "00010000", "01010100", "00111000",
-    "11111110", "00111000", "01010100", "00010000",
-};
+/* Live-data icon bitmaps, defined in status_layout.c: one row string each,
+ * '1' = ink. status.c maps the KP3 icon enum onto them. */
+extern const char icon_sun[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_cloud[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_rain[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_temp[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_warn[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_code[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_time[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_codex[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];
+extern const char icon_claude[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1];

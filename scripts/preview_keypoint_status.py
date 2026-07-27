@@ -157,16 +157,17 @@ PROFILE_COUNT = LAYOUT.status_profile_count
 
 
 def _parse_icon_bitmaps() -> dict[str, tuple[str, ...]]:
-    source = _read_widget_source("status_layout.h")
+    """Icon bitmaps from status_layout.c (the header only declares them)."""
+    source = _read_widget_source("status_layout.c")
     size = LAYOUT.live_icon_size
     icons: dict[str, tuple[str, ...]] = {}
-    for match in re.finditer(r"static const char icon_(\w+)\[[^]]*\]\[[^]]*\]\s*=\s*\{(.*?)\};", source, re.S):
+    for match in re.finditer(r"const char icon_(\w+)\[[^]]*\]\[[^]]*\]\s*=\s*\{(.*?)\};", source, re.S):
         rows = tuple(re.findall(r'"([01]+)"', match.group(2)))
         if len(rows) != size or any(len(row) != size for row in rows):
             raise ValueError(f"icon_{match.group(1)} is not {size}x{size}")
         icons[match.group(1).upper()] = rows
     if not icons:
-        raise ValueError("no icon bitmaps found in status_layout.h")
+        raise ValueError("no icon bitmaps found in status_layout.c")
     return icons
 
 
@@ -178,7 +179,7 @@ def _require_icon_bitmaps() -> None:
     anything kp3 accepts on the wire must be drawable here."""
     missing = [name for name in kp3.ICON_NAMES if name != "NONE" and name not in ICONS]
     if missing:
-        raise ValueError(f"icons accepted by the KP3 contract without a bitmap in status_layout.h: {missing}")
+        raise ValueError(f"icons accepted by the KP3 contract without a bitmap in status_layout.c: {missing}")
 
 
 _require_icon_bitmaps()
@@ -192,10 +193,10 @@ def _layout_coord(token: str) -> int:
 
 
 def _parse_profile_slot_origins() -> tuple[tuple[int, int], ...]:
-    source = _read_widget_source("status_info_panel.h")
+    source = _read_widget_source("status_info_panel.c")
     block_match = re.search(r"slot_offsets\[[^]]*\]\[2\]\s*=\s*\{(.*?)\};", source, re.S)
     if block_match is None:
-        raise ValueError("slot_offsets not found in status_info_panel.h")
+        raise ValueError("slot_offsets not found in status_info_panel.c")
     origins = [
         (_layout_coord(x_text), _layout_coord(y_text))
         for x_text, y_text in re.findall(r"\{(\w+),\s*(\w+)\}", block_match.group(1))
@@ -270,7 +271,7 @@ def live_data_snapshot(frame: str | None, stale: bool = False) -> LiveDataSnapsh
 
 
 # ---------------------------------------------------------------------------
-# Status state + widget drawing (status.c / util.c / status_info_panel.h port)
+# Status state + widget drawing (status.c / util.c / status_info_panel.c port)
 # ---------------------------------------------------------------------------
 
 
@@ -494,7 +495,7 @@ def _draw_profile_slot(canvas: Canvas, state: StatusState, index: int, x: int, y
 
 
 def layer_info_text(state: StatusState) -> str:
-    """layer_info_text() in status_info_panel.h, incl. its 16-byte fallback buffer."""
+    """layer_info_text() in status_info_panel.c, incl. its 16-byte fallback buffer."""
     if state.layer_index == 0:
         return "BASE"
     if state.layer_label is not None:

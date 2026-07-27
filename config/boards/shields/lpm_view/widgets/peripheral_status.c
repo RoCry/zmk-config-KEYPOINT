@@ -19,7 +19,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/usb.h>
 #include <zmk/ble.h>
 
-#include "peripheral_status.h"
+#include "status.h"
 
 // ==================== 图片声明 ====================
 LV_IMG_DECLARE(astronaut);

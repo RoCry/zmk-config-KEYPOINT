@@ -16,6 +16,7 @@ behaviour tests there.
 import ast
 import importlib.util
 import random
+import re
 from pathlib import Path
 
 import keypoint_demo_cards as demo_cards
@@ -39,9 +40,13 @@ BOARD_CONFIGS = (
     ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_left_defconfig",
     ROOT / "config/boards/arm/zitaotech_keypoint/zitaotech_keypoint_right_defconfig",
 )
-STATUS_INFO_PANEL_H = ROOT / "config/boards/shields/lpm_view/widgets/status_info_panel.h"
-STATUS_LAYOUT_H = ROOT / "config/boards/shields/lpm_view/widgets/status_layout.h"
-UTIL_H = ROOT / "config/boards/shields/lpm_view/widgets/util.h"
+WIDGETS_DIR = ROOT / "config/boards/shields/lpm_view/widgets"
+STATUS_H = WIDGETS_DIR / "status.h"
+STATUS_INFO_PANEL_C = WIDGETS_DIR / "status_info_panel.c"
+STATUS_INFO_PANEL_H = WIDGETS_DIR / "status_info_panel.h"
+STATUS_LAYOUT_C = WIDGETS_DIR / "status_layout.c"
+STATUS_LAYOUT_H = WIDGETS_DIR / "status_layout.h"
+UTIL_H = WIDGETS_DIR / "util.h"
 CMAKE = ROOT / "config/boards/shields/lpm_view/CMakeLists.txt"
 LEFT_CMAKE = ROOT / "config/boards/shields/left_bbtrackpad_keypoint/CMakeLists.txt"
 KCONFIG = ROOT / "config/boards/shields/lpm_view/Kconfig.defconfig"
@@ -285,6 +290,51 @@ def test_shared_widget_headers_are_guarded() -> None:
     assert "#pragma once" in STATUS_LAYOUT_H.read_text()
 
 
+def test_widget_headers_declare_rather_than_define() -> None:
+    """Headers under widgets/ carry interfaces, not code or data.
+
+    A `static` definition in a header compiles a private copy into every
+    translation unit that includes it, and a definition that varies by build
+    config is how one struct tag ended up with two shapes across the split.
+    """
+    for header in sorted(WIDGETS_DIR.rglob("*.h")):
+        text = header.read_text()
+        assert not re.search(r"^static\b", text, re.M), f"{header.name} defines a static function or table"
+        assert "] = {" not in text, f"{header.name} defines a data table"
+
+
+def test_one_status_widget_struct_serves_both_halves() -> None:
+    """The status screen allocates the widget; CMake picks which half
+    implements it. One tag with one layout per image, or the peripheral
+    allocates the central's shape and reads a struct nobody wrote."""
+    status_h = STATUS_H.read_text()
+    screen = (ROOT / "config/boards/shields/lpm_view/custom_status_screen.c").read_text()
+    peripheral = (WIDGETS_DIR / "peripheral_status.c").read_text()
+    cmake = CMAKE.read_text()
+
+    assert not (WIDGETS_DIR / "peripheral_status.h").exists()
+    assert '#include "status.h"' in peripheral
+    assert '#include "widgets/status.h"' in screen
+
+    # The second canvas buffer exists exactly where the second canvas is drawn:
+    # under the same symbol CMake selects widgets/status.c on.
+    assert "#if IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA)\n    lv_color_t cbuf2[CANVAS_SIZE * CANVAS_SIZE];" in status_h
+    assert "if(CONFIG_KEYPOINT_LIVE_DATA)" in cmake
+    assert "cbuf2" not in peripheral
+
+
+def test_central_only_drawing_sources_stay_out_of_the_peripheral_image() -> None:
+    """status.c's drawing helpers own the live-data icon bitmaps and the
+    profile grid, neither of which the peripheral screen renders. Wired outside
+    the central branch they would link their .rodata into it anyway."""
+    _, _, conditional = CMAKE.read_text().partition("if(CONFIG_KEYPOINT_LIVE_DATA)")
+    central, _, peripheral = conditional.partition("else()")
+
+    for source in ("widgets/status.c", "widgets/status_layout.c", "widgets/status_info_panel.c"):
+        assert source in central
+        assert source not in peripheral
+
+
 def test_status_tracks_each_ble_profile_state() -> None:
     text = STATUS_C.read_text()
     util = UTIL_H.read_text()
@@ -301,7 +351,7 @@ def test_status_tracks_each_ble_profile_state() -> None:
 
 def test_status_uses_compact_profile_grid_and_layer_info() -> None:
     status = STATUS_C.read_text()
-    info_panel = STATUS_INFO_PANEL_H.read_text()
+    info_panel = STATUS_INFO_PANEL_C.read_text()
     text = status + info_panel
 
     middle_start = status.index("static void draw_middle(")
@@ -363,7 +413,7 @@ def test_live_data_splits_lines_between_top_and_middle_canvas() -> None:
 
 
 def test_status_layout_uses_named_constants_for_live_data_and_profile_grid() -> None:
-    text = STATUS_C.read_text() + STATUS_INFO_PANEL_H.read_text()
+    text = STATUS_C.read_text() + STATUS_INFO_PANEL_C.read_text()
     layout = STATUS_LAYOUT_H.read_text()
 
     for name in (
@@ -398,10 +448,10 @@ def test_profile_layout_leaves_room_for_layer_chip() -> None:
 
 def test_layer_info_uses_small_unframed_trimmed_text() -> None:
     status = STATUS_C.read_text()
-    info_panel = STATUS_INFO_PANEL_H.read_text()
+    info_panel = STATUS_INFO_PANEL_C.read_text()
     text = status + info_panel
 
-    layer_start = info_panel.index("static void draw_layer_info(")
+    layer_start = info_panel.index("void draw_layer_info(")
     layer = info_panel[layer_start:]
 
     assert "draw_rect_outline(" not in layer
@@ -515,22 +565,18 @@ def test_every_accepted_icon_reaches_the_renderer() -> None:
 
 
 def test_codex_icon_uses_openai_mark_inspired_bitmap() -> None:
-    status = STATUS_LAYOUT_H.read_text()
+    bitmaps = STATUS_LAYOUT_C.read_text()
 
     assert (
-        "static const char icon_codex[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {\n"
+        "const char icon_codex[KEYPOINT_LIVE_ICON_SIZE][KEYPOINT_LIVE_ICON_SIZE + 1] = {\n"
         '    "00111100", "01011010", "10100101", "10111101",\n'
         '    "10111101", "10100101", "01011010", "00111100",\n'
         "};"
-    ) in status
+    ) in bitmaps
 
-    old_x_bitmap = (
-        "static const char icon_codex[LIVE_DATA_ICON_SIZE][LIVE_DATA_ICON_SIZE + 1] = {\n"
-        '    "10000001", "01000010", "00100100", "00011000",\n'
-        '    "00011000", "00100100", "01000010", "10000001",\n'
-        "};"
-    )
-    assert old_x_bitmap not in status
+    # The plain X it replaced.
+    old_x_rows = '    "10000001", "01000010", "00100100", "00011000",\n'
+    assert old_x_rows not in bitmaps
 
 
 def test_demo_sender_declares_no_contract_of_its_own() -> None:
