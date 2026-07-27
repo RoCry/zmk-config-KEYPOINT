@@ -5,7 +5,7 @@ ZMK config for the ZitaoTech KEYPOINT split keyboard.
 ## Current Features
 
 - Left display LiveData service: encrypted BLE write characteristic for compact status cards.
-- KP3 deck protocol: whole-deck generation id, page index/total, icon, LED hint, six 8-char text lines.
+- KP3 deck protocol: whole-deck generation id, page index/total, icon, LED hint, six 9-char text lines.
 - Trackpad LED status patterns: touch/backlight preview, USB transport confirmation, LiveData generation confirmation, stale/no-data/error/warning/attention pulses.
 - A320 trackpad: interrupt-driven I2C read path, scroll/arrow modes, touch state exposed to the LED driver.
 
@@ -30,10 +30,12 @@ KP3|GEN|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6
 - `TOTAL`: decimal deck size, `1..8`.
 - `ICON`: one of firmware `KEYPOINT_LIVE_DATA_ICON_*` ids, including `CLAUDE` and `CODEX`.
 - `LED`: `0` none, `1` active, `2` attention, `3` warning, `4` error.
-- `L1..L6`: printable ASCII, max 8 chars each, `|` not allowed.
-- Max frame size: 75 bytes.
+- `L1..L6`: printable ASCII, max 9 chars each, `|` not allowed. A full 9-char line fills the 72px glass edge to edge (monospace 8px glyphs).
+- Max frame size: 81 bytes.
 
 Firmware stages KP3 pages by `(GEN, TOTAL)` and only commits the visible deck after every page in that generation has arrived. Old KP2 frames are rejected.
+
+`config/boards/shields/lpm_view/widgets/live_data.{h,c}` is the contract; `scripts/kp3.py` is the tooling authority that derives it. kp3 parses those C sources at import, so every constant above has exactly one home. Preview, demo sender, diagnose probe and the tests all build and validate frames through kp3 — nothing else may declare a contract value.
 
 Producer reference lives in `~/w/_hw/rcink/producer/rcink/keypoint.py`; upgrade producer and firmware together.
 
