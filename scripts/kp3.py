@@ -394,6 +394,17 @@ def build_frame(
     """
     if len(lines) > TEXT_LINE_COUNT:
         raise FrameError(f"at most {TEXT_LINE_COUNT} lines, got {len(lines)}")
+    for name, value in (
+        ("generation", generation),
+        ("index", index),
+        ("total", total),
+        ("led_hint", led_hint),
+    ):
+        # bool is an int subclass, so `led_hint=True` would silently ship as
+        # ACTIVE and `total=True` as a one-page deck. Both are caller bugs the
+        # wire cannot express, so they are rejected here rather than encoded.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise FrameError(f"{name} must be an int, got {value!r}")
     if not 0 <= generation <= _GENERATION_MAX:
         raise FrameError(f"generation {generation} outside 0..{_GENERATION_MAX}")
 

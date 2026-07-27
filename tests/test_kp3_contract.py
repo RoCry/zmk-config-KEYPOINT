@@ -258,6 +258,15 @@ def test_builders_refuse_what_does_not_fit() -> None:
         kp3.build_frame("SUN", generation=0x100)
 
 
+@pytest.mark.parametrize("field", ["generation", "index", "total", "led_hint"])
+def test_builders_reject_bools_masquerading_as_ints(field: str) -> None:
+    """bool subclasses int, so True would encode as 1 and ship a valid frame
+    saying something the caller never meant -- led_hint ACTIVE, a one-page
+    deck. The wire cannot express the mistake, so the builder refuses it."""
+    with pytest.raises(kp3.FrameError, match=field):
+        kp3.build_frame("SUN", **{field: True})
+
+
 def test_build_frame_rejects_frames_the_firmware_would_reject() -> None:
     """Builders validate their own output, so a bad deck fails at the source."""
     with pytest.raises(kp3.FrameError):
