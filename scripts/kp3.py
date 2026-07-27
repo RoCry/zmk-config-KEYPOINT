@@ -29,6 +29,7 @@ module has to be importable from any test.
 from __future__ import annotations
 
 import ast
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,8 @@ from typing import Final
 ROOT: Final = Path(__file__).resolve().parent.parent
 WIDGETS_DIR: Final = ROOT / "config/boards/shields/lpm_view/widgets"
 CONTRACT_HEADER: Final = WIDGETS_DIR / "live_data.h"
+#: Frozen contract for vendored copies that ship without the firmware tree.
+CONTRACT_SNAPSHOT: Final = Path(__file__).resolve().with_name("kp3_contract.json")
 
 
 class ContractError(RuntimeError):
@@ -151,27 +154,69 @@ def _parse_acceptance_chain(function: str) -> tuple[str, ...]:
     raise ContractError(f"{function}() not found under {WIDGETS_DIR}")
 
 
-_HEADER: Final = _header_source()
-_MACROS: Final = _macro_ints(_HEADER)
-
-PREFIX: Final[str] = _parse_prefix(_HEADER)
-GENERATION_FIELD_MAX: Final[int] = _macro_int(_MACROS, "GENERATION_FIELD_MAX")
-ICON_MAX: Final[int] = _macro_int(_MACROS, "ICON_MAX")
-LED_HINT_FIELD_MAX: Final[int] = _macro_int(_MACROS, "LED_HINT_FIELD_MAX")
-TEXT_LINE_COUNT: Final[int] = _macro_int(_MACROS, "TEXT_LINE_COUNT")
-LINE_MAX: Final[int] = _macro_int(_MACROS, "LINE_MAX")
-PAGE_MAX: Final[int] = _macro_int(_MACROS, "PAGE_MAX")
-PAGE_FIELD_MAX: Final[int] = _macro_int(_MACROS, "PAGE_FIELD_MAX")
-STALE_MS: Final[int] = _macro_int(_MACROS, "STALE_MS")
-FRAME_MAX: Final[int] = _parse_frame_max(_HEADER, PREFIX, _MACROS)
-
-ICON_NAMES: Final[tuple[str, ...]] = _parse_enum_names(_HEADER, "keypoint_live_data_icon", "KEYPOINT_LIVE_DATA_ICON_")
-LED_HINT_NAMES: Final[tuple[str, ...]] = _parse_enum_names(
-    _HEADER, "keypoint_live_data_led_hint", "KEYPOINT_LIVE_DATA_LED_HINT_"
+_MACRO_NAMES: Final = (
+    "GENERATION_FIELD_MAX",
+    "ICON_MAX",
+    "LED_HINT_FIELD_MAX",
+    "TEXT_LINE_COUNT",
+    "LINE_MAX",
+    "PAGE_MAX",
+    "PAGE_FIELD_MAX",
+    "STALE_MS",
 )
+
+
+def derive_from_firmware() -> dict[str, object]:
+    """Read the whole contract out of the firmware C sources."""
+    header = _header_source()
+    macros = _macro_ints(header)
+    prefix = _parse_prefix(header)
+    return {
+        "prefix": prefix,
+        **{name.lower(): _macro_int(macros, name) for name in _MACRO_NAMES},
+        "frame_max": _parse_frame_max(header, prefix, macros),
+        "icon_names": list(_parse_enum_names(header, "keypoint_live_data_icon", "KEYPOINT_LIVE_DATA_ICON_")),
+        "led_hint_names": list(
+            _parse_enum_names(header, "keypoint_live_data_led_hint", "KEYPOINT_LIVE_DATA_LED_HINT_")
+        ),
+        "icon_acceptance_chain": list(_parse_acceptance_chain("icon_from_field")),
+        "led_acceptance_chain": list(_parse_acceptance_chain("led_hint_from_field")),
+    }
+
+
+def _load_contract() -> dict[str, object]:
+    """Derive from the firmware when it is present, else from the frozen copy.
+
+    kp3 is vendored into producers that have no firmware checkout (see the
+    rcink reference producer). `--freeze` writes the snapshot beside this
+    module; a test in this repo regenerates it and fails on any difference, so
+    the frozen copy cannot drift away from the C it was taken from.
+    """
+    if CONTRACT_HEADER.is_file():
+        return derive_from_firmware()
+    if CONTRACT_SNAPSHOT.is_file():
+        return json.loads(CONTRACT_SNAPSHOT.read_text())
+    raise ContractError(f"no contract source: neither {CONTRACT_HEADER} nor {CONTRACT_SNAPSHOT} exists")
+
+
+_CONTRACT: Final = _load_contract()
+
+PREFIX: Final[str] = str(_CONTRACT["prefix"])
+GENERATION_FIELD_MAX: Final[int] = int(_CONTRACT["generation_field_max"])  # type: ignore[arg-type]
+ICON_MAX: Final[int] = int(_CONTRACT["icon_max"])  # type: ignore[arg-type]
+LED_HINT_FIELD_MAX: Final[int] = int(_CONTRACT["led_hint_field_max"])  # type: ignore[arg-type]
+TEXT_LINE_COUNT: Final[int] = int(_CONTRACT["text_line_count"])  # type: ignore[arg-type]
+LINE_MAX: Final[int] = int(_CONTRACT["line_max"])  # type: ignore[arg-type]
+PAGE_MAX: Final[int] = int(_CONTRACT["page_max"])  # type: ignore[arg-type]
+PAGE_FIELD_MAX: Final[int] = int(_CONTRACT["page_field_max"])  # type: ignore[arg-type]
+STALE_MS: Final[int] = int(_CONTRACT["stale_ms"])  # type: ignore[arg-type]
+FRAME_MAX: Final[int] = int(_CONTRACT["frame_max"])  # type: ignore[arg-type]
+
+ICON_NAMES: Final[tuple[str, ...]] = tuple(_CONTRACT["icon_names"])  # type: ignore[arg-type]
+LED_HINT_NAMES: Final[tuple[str, ...]] = tuple(_CONTRACT["led_hint_names"])  # type: ignore[arg-type]
 #: Wire spelling -> enum ordinal, as `led_hint_from_field()` maps them.
 LED_HINTS: Final[dict[str, int]] = dict(
-    zip(_parse_acceptance_chain("led_hint_from_field"), range(len(LED_HINT_NAMES)), strict=True)
+    zip(_CONTRACT["led_acceptance_chain"], range(len(LED_HINT_NAMES)), strict=True)  # type: ignore[arg-type]
 )
 LED_CODES: Final[tuple[int, ...]] = tuple(LED_HINTS.values())
 
@@ -184,15 +229,14 @@ _GENERATION_MAX: Final = 16**GENERATION_FIELD_MAX - 1
 
 
 def icon_names_from_acceptance_chain() -> tuple[str, ...]:
-    """Icon spellings `icon_from_field()` accepts, derived from the C chain."""
-    return _parse_acceptance_chain("icon_from_field")
+    """Icon spellings `icon_from_field()` accepts, from the C strcmp chain."""
+    return tuple(_CONTRACT["icon_acceptance_chain"])  # type: ignore[arg-type]
 
 
 def _validate_contract() -> None:
-    if icon_names_from_acceptance_chain() != ICON_NAMES:
-        raise ContractError(
-            f"icon enum and icon_from_field() disagree: enum={ICON_NAMES} chain={icon_names_from_acceptance_chain()}"
-        )
+    chain = icon_names_from_acceptance_chain()
+    if chain != ICON_NAMES:
+        raise ContractError(f"icon enum and icon_from_field() disagree: enum={ICON_NAMES} chain={chain}")
     if tuple(LED_HINTS) != tuple(str(code) for code in range(len(LED_HINT_NAMES))):
         raise ContractError(f"led_hint_from_field() does not spell the enum ordinals: {tuple(LED_HINTS)}")
     if PAGE_MAX >= 10**PAGE_FIELD_MAX:
@@ -400,3 +444,18 @@ def claude_card(*args, **kwargs) -> str:
 def codex_card(*args, **kwargs) -> str:
     """`usage_card()` for the CODEX deck page."""
     return usage_card("CODEX", "CODEX", *args, **kwargs)
+
+
+def freeze() -> str:
+    """Serialise the firmware-derived contract for vendored copies."""
+    return json.dumps(derive_from_firmware(), indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+if __name__ == "__main__":
+    import sys
+
+    if sys.argv[1:] == ["--freeze"]:
+        CONTRACT_SNAPSHOT.write_text(freeze())
+        print(f"wrote {CONTRACT_SNAPSHOT}")
+    else:
+        print(freeze(), end="")

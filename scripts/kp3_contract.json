@@ -1,0 +1,50 @@
+{
+  "frame_max": 81,
+  "generation_field_max": 2,
+  "icon_acceptance_chain": [
+    "NONE",
+    "SUN",
+    "CLOUD",
+    "RAIN",
+    "TEMP",
+    "WARN",
+    "CODE",
+    "TIME",
+    "CODEX",
+    "CLAUDE"
+  ],
+  "icon_max": 8,
+  "icon_names": [
+    "NONE",
+    "SUN",
+    "CLOUD",
+    "RAIN",
+    "TEMP",
+    "WARN",
+    "CODE",
+    "TIME",
+    "CODEX",
+    "CLAUDE"
+  ],
+  "led_acceptance_chain": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4"
+  ],
+  "led_hint_field_max": 1,
+  "led_hint_names": [
+    "NONE",
+    "ACTIVE",
+    "ATTENTION",
+    "WARNING",
+    "ERROR"
+  ],
+  "line_max": 9,
+  "page_field_max": 1,
+  "page_max": 8,
+  "prefix": "KP3|",
+  "stale_ms": 360000,
+  "text_line_count": 6
+}

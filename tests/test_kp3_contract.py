@@ -6,6 +6,11 @@ source: every expected number comes back out of kp3, which derives it from
 or fails loudly here.
 """
 
+import importlib.util
+import shutil
+import sys
+from pathlib import Path
+
 import kp3
 import pytest
 
@@ -53,6 +58,31 @@ def test_led_codes_are_derived_from_the_firmware_not_declared() -> None:
 
 def test_page_field_width_can_hold_the_page_max() -> None:
     assert kp3.PAGE_MAX < 10**kp3.PAGE_FIELD_MAX
+
+
+def test_the_frozen_contract_matches_the_firmware_it_was_taken_from() -> None:
+    """Vendored copies read the snapshot; it must not drift from the C."""
+    assert kp3.CONTRACT_SNAPSHOT.read_text() == kp3.freeze(), (
+        f"regenerate it: uv run --no-project python {kp3.__file__} --freeze"
+    )
+
+
+def test_kp3_works_vendored_without_a_firmware_checkout(tmp_path: Path) -> None:
+    """The rcink producer ships kp3 with no firmware tree beside it."""
+    for name in ("kp3.py", "kp3_contract.json"):
+        shutil.copy(Path(kp3.__file__).with_name(name), tmp_path / name)
+
+    spec = importlib.util.spec_from_file_location("kp3_vendored", tmp_path / "kp3.py")
+    assert spec is not None and spec.loader is not None
+    vendored = importlib.util.module_from_spec(spec)
+    sys.modules["kp3_vendored"] = vendored  # slotted @dataclass needs this registered
+    spec.loader.exec_module(vendored)
+
+    assert not vendored.CONTRACT_HEADER.is_file(), "the copy must not see the firmware"
+    assert vendored.LINE_MAX == kp3.LINE_MAX
+    assert vendored.FRAME_MAX == kp3.FRAME_MAX
+    assert vendored.ICON_NAMES == kp3.ICON_NAMES
+    assert vendored.claude_card("1h23m", 22, "4d", 41, led_hint=0) == kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0)
 
 
 # ---------------------------------------------------------------------------
