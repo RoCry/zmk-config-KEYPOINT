@@ -379,6 +379,29 @@ def bar(pct: int) -> str:
     return f"[{pct:03d}]"
 
 
+def scoped_limit_row(label: str, pct: int) -> str:
+    """A `TAG NN%` row: one model-scoped limit inside a usage window.
+
+    Deliberately not padded like `kv()`. The glass right-aligns text lines, so
+    a scoped limit reads as a single short token trailing the window it sits
+    under, rather than opening a third label column.
+
+    How wide the label may be follows from the line: whatever leaves room for
+    the percentage. The pair reaches `usage_card()` as one argument, so a
+    swapped pair would otherwise render as a frame the firmware accepts and
+    nobody can read ("68 FB%"); both halves are type-checked rather than
+    formatted blindly.
+    """
+    if not isinstance(label, str) or not label:
+        raise FrameError(f"scoped limit label must be a non-empty string, got {label!r}")
+    if isinstance(pct, bool) or not isinstance(pct, int) or pct < 0:
+        raise FrameError(f"scoped limit percentage must be a non-negative int, got {pct!r}")
+    row = f"{label} {pct}%"
+    if len(row) > LINE_MAX:
+        raise FrameError(f"scoped limit row {row!r} longer than {LINE_MAX} chars")
+    return row
+
+
 def build_frame(
     icon: str,
     *lines: str,
@@ -422,6 +445,7 @@ def usage_card(
     seven_day_window: str,
     seven_day_pct: int,
     *,
+    scoped_limit: tuple[str, int] | None = None,
     led_hint: int,
     generation: int = 0,
     index: int = 0,
@@ -430,8 +454,10 @@ def usage_card(
     """The rate-limit card shape the reference producer emits.
 
     Title, then a countdown-to-reset row and a utilisation bar per window
-    (5H then 7D), with the last line empty. Keeping the shape here is what
-    lets the preview's demo deck byte-match the producer's real output.
+    (5H then 7D). The last line carries the highest model-scoped limit as
+    `(label, pct)` when the plan has one, and is empty otherwise. Keeping the
+    shape here is what lets the preview's demo deck byte-match the producer's
+    real output.
     """
     return build_frame(
         icon,
@@ -440,6 +466,7 @@ def usage_card(
         bar(five_hour_pct),
         kv("7D", seven_day_window),
         bar(seven_day_pct),
+        scoped_limit_row(*scoped_limit) if scoped_limit is not None else "",
         generation=generation,
         index=index,
         total=total,

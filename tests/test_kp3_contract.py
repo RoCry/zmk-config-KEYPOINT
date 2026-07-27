@@ -247,11 +247,22 @@ def test_bar_is_a_fixed_width_percentage_row() -> None:
     assert kp3.bar(100) == "[100]"
 
 
+def test_scoped_limit_row_is_short_and_unpadded() -> None:
+    """Unlike kv(), the scoped-limit row does not claim the whole line: the
+    glass right-aligns it, so it reads as one token under the 7D bar."""
+    assert kp3.scoped_limit_row("FB", 41) == "FB 41%"
+    assert kp3.scoped_limit_row("FB", 100) == "FB 100%"
+    # The label may grow until the percentage runs out of line.
+    assert len(kp3.scoped_limit_row("ABCD", 100)) == kp3.LINE_MAX
+
+
 def test_builders_refuse_what_does_not_fit() -> None:
     with pytest.raises(kp3.FrameError):
         kp3.kv("LABEL", "VALUE1234")
     with pytest.raises(kp3.FrameError):
         kp3.title("X" * (kp3.LINE_MAX + 1))
+    with pytest.raises(kp3.FrameError):
+        kp3.scoped_limit_row("FABLE", 100)  # "FABLE 100%" is one over the line
     with pytest.raises(kp3.FrameError):
         kp3.build_frame("SUN", *["x"] * (kp3.TEXT_LINE_COUNT + 1))
     with pytest.raises(kp3.FrameError):
@@ -291,3 +302,22 @@ def test_usage_cards_fill_the_full_line_width() -> None:
     codex = kp3.parse(kp3.codex_card("12m", 78, "2d", 54, led_hint=2))
     assert codex.icon == "CODEX"
     assert codex.led_hint == 2
+
+
+def test_usage_cards_carry_a_scoped_limit_on_the_last_line() -> None:
+    """The producer's usual claude card: L6 is the highest model-scoped limit."""
+    scoped = kp3.parse(kp3.claude_card("1h23m", 22, "4d", 41, scoped_limit=("FB", 68), led_hint=0))
+    plain = kp3.parse(kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0))
+
+    assert scoped.lines[:5] == plain.lines[:5]
+    assert scoped.lines[5] == kp3.scoped_limit_row("FB", 68)
+    assert plain.lines[5] == ""
+
+
+def test_a_scoped_limit_pair_the_caller_swapped_is_refused() -> None:
+    """usage_card() takes the pair as one argument, so the wire can express the
+    swap: "68 FB%" fits the line and the firmware would accept it."""
+    with pytest.raises(kp3.FrameError):
+        kp3.scoped_limit_row(68, "FB")  # type: ignore[arg-type]
+    with pytest.raises(kp3.FrameError):
+        kp3.claude_card("1h23m", 22, "4d", 41, scoped_limit=(68, "FB"), led_hint=0)  # type: ignore[arg-type]

@@ -556,7 +556,8 @@ _DEMO_GENERATION = 0xA0
 # The KEYPOINT keyboard only ever shows the claude + codex usage cards built by
 # rcink (producer/rcink/keypoint_cards.py, CARD_ORDER = ("claude", "codex")),
 # whose shape kp3.usage_card() owns: title + a window row (countdown to reset)
-# and a [bar] utilisation row per window (5H/7D), with L6 empty -- no timestamp
+# and a [bar] utilisation row per window (5H/7D), then L6 -- the highest
+# model-scoped limit when the plan has one, empty when it does not. No timestamp
 # line (show_timestamp=False), no weather. The countdown strings below follow
 # rcink's fmt_countdown (NOW / 12m / 1h23m / 18h / 4d).
 DEMO_CASES: tuple[PreviewCase, ...] = (
@@ -565,6 +566,13 @@ DEMO_CASES: tuple[PreviewCase, ...] = (
         name="claude_fresh",
         state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
         frame=kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0, generation=_DEMO_GENERATION),
+    ),
+    PreviewCase(
+        # The claude card as it usually arrives: a model-scoped limit fills L6,
+        # the only line the usage cards otherwise leave blank.
+        name="claude_scoped_limit",
+        state=StatusState(78, False, "ble", 0, _PROFILES_CONNECTED, _PROFILES_BONDED, 0),
+        frame=kp3.claude_card("1h30m", 76, "4d", 88, scoped_limit=("FB", 68), led_hint=2, generation=_DEMO_GENERATION),
     ),
     PreviewCase(
         # Codex card, one window into the attention band (>=75%) -> LED hint 2,

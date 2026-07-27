@@ -9,6 +9,8 @@ Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants
 - **Deck** — the set of `TOTAL` cards sharing one generation. Staged page-by-page; committed atomically only when every page of the generation has arrived.
 - **Generation (GEN)** — two-hex-digit deck transaction id. A new generation replaces the whole deck; a repeated one updates pages in place.
 - **Page (IDX/TOTAL)** — a card's position in its deck, `0 <= IDX < TOTAL <= 8`. Navigation wraps.
+- **Usage card** — the rate-limit card shape (`kp3.usage_card`): a countdown row and a utilisation bar per window (5H/7D), then the scoped limit. Both the CLAUDE and CODEX pages are usage cards.
+- **Scoped limit** — a per-model rate limit inside a plan (e.g. Fable at 68%), shown as one short `TAG NN%` row on a usage card's last line. The card has room for one, so the producer picks which (rcink sends the highest); a plan without any leaves the line empty.
 - **Producer** — external host program building decks and writing frames. Reference producer: rcink (`~/w/_hw/rcink/producer/rcink/keypoint.py`).
 - **kp3 contract module** — the single Python authority (`scripts/kp3.py`): constants derived from the firmware header at import, plus the one parser / validator / frame builder every script and test uses.
 

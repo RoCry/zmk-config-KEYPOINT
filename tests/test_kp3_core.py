@@ -178,6 +178,7 @@ def _corpus() -> list[str]:
         kp3.build_frame("SUN", "A", "B", "C", "D", "E", "F", generation=0x00),
         kp3.build_frame("CLAUDE", *lines, generation=0xFF, index=7, total=8, led_hint=4),
         kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0, generation=0xA0),
+        kp3.claude_card("1h30m", 76, "4d", 88, scoped_limit=("FB", 68), led_hint=2, generation=0xA0),
         kp3.codex_card("NOW", 96, "18h", 89, led_hint=3, generation=0x0F, index=1, total=2),
         *(kp3.build_frame(icon) for icon in kp3.ICON_NAMES),
         *(kp3.build_frame("SUN", led_hint=code) for code in kp3.LED_CODES),
