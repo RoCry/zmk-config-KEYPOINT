@@ -6,21 +6,40 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LPM_VIEW = ROOT / "config/boards/shields/lpm_view"
 
-DISABLED_PERIPHERAL_IMAGES = ("cat", "mounta", "plane", "vader")
+SOURCES_CALL = re.compile(r"zephyr_library_sources\(([^)]*)\)")
+
+
+def wired_sources() -> set[str]:
+    """Shield-relative paths every CMake target compiles."""
+    text = (LPM_VIEW / "CMakeLists.txt").read_text()
+    return {entry for call in SOURCES_CALL.finditer(text) for entry in call.group(1).split()}
+
+
+def existing_sources() -> set[str]:
+    return {path.relative_to(LPM_VIEW).as_posix() for path in LPM_VIEW.rglob("*.c")}
+
+
+def test_every_display_source_is_wired_into_a_cmake_target() -> None:
+    wired = wired_sources()
+    existing = existing_sources()
+
+    assert existing, f"no display sources under {LPM_VIEW}"
+    assert not existing - wired, f"sources no CMake target compiles: {sorted(existing - wired)}"
+    assert not wired - existing, f"CMake compiles missing sources: {sorted(wired - existing)}"
 
 
 def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
     asset = LPM_VIEW / "widgets/picture/al_pacino.c"
-    cmake = (LPM_VIEW / "CMakeLists.txt").read_text()
     status = (LPM_VIEW / "widgets/peripheral_status.c").read_text()
 
     assert asset.is_file()
-    assert "widgets/picture/al_pacino.c" in cmake
+    assert "widgets/picture/al_pacino.c" in wired_sources()
     assert "LV_IMG_DECLARE(al_pacino);" in status
     assert "&al_pacino" in status
 
@@ -32,20 +51,6 @@ def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
     assert ".data_size = 1088" in source
 
 
-def test_disabled_images_are_not_wired_into_peripheral_firmware() -> None:
-    cmake = (LPM_VIEW / "CMakeLists.txt").read_text()
-    status = (LPM_VIEW / "widgets/peripheral_status.c").read_text()
-
-    assert "widgets/art.c" not in cmake
-    assert "widgets/landspace/landspace1.c" not in cmake
-    assert "widgets/bunnygirl_anima/ballon.c" not in cmake
-
-    for image in DISABLED_PERIPHERAL_IMAGES:
-        assert f"widgets/picture/{image}.c" not in cmake
-        assert f"LV_IMG_DECLARE({image});" not in status
-        assert f"&{image}" not in status
-
-
 if __name__ == "__main__":
+    test_every_display_source_is_wired_into_a_cmake_target()
     test_al_pacino_asset_is_wired_into_peripheral_firmware()
-    test_disabled_images_are_not_wired_into_peripheral_firmware()
