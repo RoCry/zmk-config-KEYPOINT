@@ -12,11 +12,11 @@
 #include <stdint.h>
 
 #define CANVAS_SIZE 72
-#define KEYPOINT_MIDDLE_X 68
+#define KEYPOINT_MIDDLE_X 72
 #define KEYPOINT_STATUS_PROFILE_COUNT 4
 
-#define LVGL_BACKGROUND lv_color_white()
-#define LVGL_FOREGROUND lv_color_black()
+#define LVGL_BACKGROUND lv_color_black()
+#define LVGL_FOREGROUND lv_color_white()
 
 struct status_state {
     uint8_t battery;
@@ -42,7 +42,7 @@ struct battery_status_state {
 #endif
 };
 
-void rotate_canvas(lv_obj_t *canvas, lv_color_t cbuf[]);
+void rotate_canvas(lv_obj_t *canvas, void *pixels);
 void draw_battery(lv_obj_t *canvas, const struct status_state *state);
 void init_label_dsc(lv_draw_label_dsc_t *label_dsc, lv_color_t color, const lv_font_t *font,
                     lv_text_align_t align);

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import kp4
-from keypoint_native import StatusState, render_left_screen
+from keypoint_native import StatusState, render_left_screen, render_right_screen, right_images
 from PIL import Image
 
 
@@ -33,13 +33,7 @@ _PROFILES_BONDED = (True, True, False, False)
 #: Generation the demo deck is stamped with; any two-hex-digit value will do.
 _DEMO_GENERATION = 0xA0
 
-# The KEYPOINT keyboard only ever shows the claude + codex usage cards built by
-# rcink (producer/rcink/keypoint_cards.py, CARD_ORDER = ("claude", "codex")),
-# whose shape kp4.usage_card() owns: title + a window row (countdown to reset)
-# and a [bar] utilisation row per window (5H/7D), then L6 -- the highest
-# model-scoped limit when the plan has one, empty when it does not. No timestamp
-# line (show_timestamp=False), no weather. The countdown strings below follow
-# rcink's fmt_countdown (NOW / 12m / 1h23m / 18h / 4d).
+# Usage cases mirror rcink's countdown/window rows and optional scoped limit.
 DEMO_CASES: tuple[PreviewCase, ...] = (
     PreviewCase(
         # Fresh claude card, low usage, BLE connected on the base layer.
@@ -133,6 +127,10 @@ def write_preview_set(output_dir: Path, scale: int = 4) -> list[Path]:
         image = render_left_screen(case.state, case.frame, stale=case.stale)
         output = output_dir / f"left_screen_{case.name}.png"
         scale_image(image, scale).save(output)
+        written.append(output)
+    for name in right_images():
+        output = output_dir / f"right_screen_{name}.png"
+        scale_image(render_right_screen(image=name), scale).save(output)
         written.append(output)
     return written
 

@@ -5,7 +5,7 @@ Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants
 ## Wire / protocol
 
 - **KP4 frame** — `KP4|GEN|IDX|TOTAL|ICON|LED|ROLES|L1..L6`, printable ASCII, ≤88 bytes, delivered as one encrypted BLE GATT write. KP3 and older frames are rejected.
-- **Card** — one page of live data: title line (L1, contrasting text on a filled bar) + 5 content lines + corresponding row roles + icon + LED hint.
+- **Card** — one page of live data: colored title (L1) + 5 content lines + corresponding row roles + icon + LED hint. Black surface; color is foreground ink, never a row backing.
 - **Deck** — the set of `TOTAL` cards sharing one generation. Staged page-by-page; committed atomically only when every page of the generation has arrived.
 - **Generation (GEN)** — two-uppercase-hex-digit deck transaction id. All pages must arrive before replacing the committed deck, including when reusing a generation id.
 - **Page (IDX/TOTAL)** — a card's position in its deck, `0 <= IDX < TOTAL <= 8`. Navigation wraps.
@@ -18,7 +18,7 @@ Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants
 ## Firmware state
 
 - **Snapshot** — LiveData's read model: current card/row roles + `has_data` / `stale` / generation / view index / total. The only thing consumers may read.
-- **Staleness** — current committed card's frame age reaches `KEYPOINT_LIVE_DATA_STALE_MS` (6 min). Last content and roles remain visible; segmented health strip and LED signal staleness.
+- **Staleness** — current committed card's frame age reaches `KEYPOINT_LIVE_DATA_STALE_MS` (6 min). Last content and roles remain visible; split magenta health mark and LED signal staleness.
 - **LED hint** — producer-declared severity for a card: none / active / attention / warning / error.
 - **Attention level** — the single computed LED semantic LiveData exposes (folds LED hint + staleness + icon-specific emphasis). LED hardware modules render attention levels; they hold no opinion about icons or staleness.
 
@@ -28,8 +28,8 @@ Authority chain: `config/boards/shields/lpm_view/widgets/live_data.h` (constants
 - **Theme** — firmware mapping of row roles, card identity and keyboard state to panel colors and readable text/background pairs. Business thresholds belong to producer.
 - **Glass** — the physical LCD area: 72×144 native pixels. A 72×72 canvas covers one section, not the whole panel.
 - **Logical display** — LVGL/Zephyr landscape surface, 144×72 pixels; driver maps it onto native portrait glass.
-- **Canvas** — 72×72 LVGL draw surface (top / middle); exact in-place −90° rotation, then composition onto logical display. No resampling artifact or scratch buffer.
-- **Native preview** — `scripts/build_preview.py` builds pinned LVGL 8.3.7 plus the shared C renderer/theme/rotation/panel core; `scripts/preview_keypoint_status.py` produces glass PNGs through that library. No duplicate Python UI simulation; physical panel behavior still needs device acceptance.
+- **Canvas** — 72×72 LVGL draw surface; exact in-place −90° rotation, then composition onto logical display. Left uses contiguous opaque top/middle sections; right uses a transparent status overlay above fullscreen art. No resampling artifact or full rotation scratch buffer.
+- **Native preview** — pinned LVGL 8.3.7 plus shared C rendering, object geometry, gallery, rotation and panel core. Actual full-screen LVGL flush → glass PNG, including parent surfaces and overlays. No duplicate Python UI simulation; physical panel behavior still needs device acceptance.
 - **Panel conversion** — RGB565 render pixels become RGB111 by half-range channel thresholds, then compact 27-byte native rows. Driver sends changed rows at 1 MHz; full-frame LVGL VDB prevents stripe amplification.
 - **Image asset** — eight-color export uses LVGL indexed 4-bit pixels and palette; source quantization optionally uses Floyd–Steinberg dithering. `scripts/preview_lpm_image.py` exports and previews assets.
 - **Derived seam** — tooling derives wire values from C; native preview compiles the actual C drawing code. Consumers share authority instead of duplicating implementations.

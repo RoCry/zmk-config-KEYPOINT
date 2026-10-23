@@ -1,40 +1,76 @@
-/* Host adapter only; rendering, rotation, quantization and parsing are firmware code. */
+/* Real LVGL object composition and flush, followed by the firmware panel encoder. */
 #include "status_render.h"
+#include "display_surface.h"
+#include "gallery.h"
 #include "live_data_core.h"
 #include "lpm009m360a_core.h"
 #include <errno.h>
 #include <string.h>
 
-static lv_obj_t *canvases[2];
+static lv_obj_t *surfaces[2], *canvases[3], *art;
 static lv_color_t pixels[2][CANVAS_SIZE * CANVAS_SIZE];
-static lv_color_t flush_pixels[LPM_LOGICAL_WIDTH];
+static uint8_t overlay_pixels[LV_IMG_BUF_SIZE_TRUE_COLOR_ALPHA(CANVAS_SIZE, CANVAS_SIZE)];
+static lv_color_t draw_pixels[LPM_LOGICAL_WIDTH * LPM_LOGICAL_HEIGHT];
+static lv_color_t screen[LPM_LOGICAL_WIDTH * LPM_LOGICAL_HEIGHT];
 
 int keypoint_preview_dimension(int axis) {
     return axis ? LPM_NATIVE_ROWS : CANVAS_SIZE;
 }
 
+const char *keypoint_preview_image_name(int index) {
+    return index >= 0 && (size_t)index < keypoint_gallery_count ? keypoint_gallery[index].name : NULL;
+}
+
 static void flush(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *colors) {
-    (void)area;
-    (void)colors;
+    int width = area->x2 - area->x1 + 1;
+    for (int y = area->y1; y <= area->y2; ++y)
+        memcpy(screen + y * LPM_LOGICAL_WIDTH + area->x1,
+               colors + (y - area->y1) * width, width * sizeof(lv_color_t));
     lv_disp_flush_ready(drv);
 }
 
 static void init(void) {
-    if (canvases[0]) return;
+    if (surfaces[0]) return;
     lv_init();
     static lv_disp_draw_buf_t draw;
     static lv_disp_drv_t driver;
-    lv_disp_draw_buf_init(&draw, flush_pixels, NULL, LPM_LOGICAL_WIDTH);
+    lv_disp_draw_buf_init(&draw, draw_pixels, NULL, LPM_LOGICAL_WIDTH * LPM_LOGICAL_HEIGHT);
     lv_disp_drv_init(&driver);
     driver.draw_buf = &draw;
     driver.hor_res = LPM_LOGICAL_WIDTH;
     driver.ver_res = LPM_LOGICAL_HEIGHT;
     driver.flush_cb = flush;
     lv_disp_drv_register(&driver);
-    for (int i = 0; i < 2; ++i) {
-        canvases[i] = lv_canvas_create(lv_scr_act());
-        lv_canvas_set_buffer(canvases[i], pixels[i], CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
+    keypoint_style_surface(lv_scr_act());
+    for (int i = 0; i < 2; ++i) surfaces[i] = keypoint_create_surface(lv_scr_act());
+    canvases[0] = keypoint_create_canvas(surfaces[0], pixels[0], 0);
+    canvases[1] = keypoint_create_canvas(surfaces[0], pixels[1], KEYPOINT_MIDDLE_X);
+    art = keypoint_create_art(surfaces[1], keypoint_gallery[0].image);
+    canvases[2] = keypoint_create_overlay(surfaces[1], overlay_pixels);
+}
+
+static int glass(uint8_t *rgb, int side) {
+    lv_obj_add_flag(surfaces[1 - side], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(surfaces[side], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_invalidate(lv_scr_act());
+    lv_refr_now(NULL);
+    struct lpm_frame panel;
+    lpm_frame_init(&panel);
+    const struct lpm_rect r = {.width = LPM_LOGICAL_WIDTH, .height = LPM_LOGICAL_HEIGHT,
+        .pitch = LPM_LOGICAL_WIDTH, .buf_size = sizeof(screen)};
+    int ret = lpm_frame_write_rgb565(&panel, &r, screen);
+    if (ret) return ret;
+    /* Panel is mounted with its native origin at the portrait bottom-right. */
+    for (int y = 0; y < LPM_NATIVE_ROWS; ++y) {
+        const uint8_t *row = panel.pixels[LPM_NATIVE_ROWS - 1 - y];
+        for (int x = 0; x < CANVAS_SIZE; ++x) {
+            for (int channel = 0; channel < 3; ++channel) {
+                int bit = (CANVAS_SIZE - 1 - x) * 3 + channel;
+                rgb[(y * CANVAS_SIZE + x) * 3 + channel] = row[bit / 8] & (0x80 >> (bit % 8)) ? 255 : 0;
+            }
+        }
     }
+    return 0;
 }
 
 /* state: battery, charging, usb, active profile, connected mask, bonded mask,
@@ -75,30 +111,18 @@ int keypoint_preview(uint8_t *rgb, size_t size, const char *frame, bool stale,
         }
         return 0;
     }
-    static lv_color_t screen[LPM_LOGICAL_WIDTH * LPM_LOGICAL_HEIGHT];
-    for (unsigned i = 0; i < sizeof(screen) / sizeof(screen[0]); ++i) screen[i] = lv_color_white();
-    for (int i = 0; i < 2; ++i) {
-        rotate_canvas(canvases[i], pixels[i]);
-        int offset = i ? KEYPOINT_MIDDLE_X : 0;
-        for (int y = 0; y < CANVAS_SIZE; ++y)
-            memcpy(screen + y * LPM_LOGICAL_WIDTH + offset, pixels[i] + y * CANVAS_SIZE,
-                   CANVAS_SIZE * sizeof(lv_color_t));
-    }
-    struct lpm_frame panel;
-    lpm_frame_init(&panel);
-    const struct lpm_rect r = {.width = LPM_LOGICAL_WIDTH, .height = LPM_LOGICAL_HEIGHT,
-        .pitch = LPM_LOGICAL_WIDTH, .buf_size = sizeof(screen)};
-    int ret = lpm_frame_write_rgb565(&panel, &r, screen);
-    if (ret) return ret;
-    /* Panel is mounted with the native origin at the portrait bottom-right. */
-    for (int y = 0; y < LPM_NATIVE_ROWS; ++y) {
-        const uint8_t *row = panel.pixels[LPM_NATIVE_ROWS - 1 - y];
-        for (int x = 0; x < CANVAS_SIZE; ++x) {
-            for (int channel = 0; channel < 3; ++channel) {
-                int bit = (CANVAS_SIZE - 1 - x) * 3 + channel;
-                rgb[(y * CANVAS_SIZE + x) * 3 + channel] = row[bit / 8] & (0x80 >> (bit % 8)) ? 255 : 0;
-            }
-        }
-    }
-    return 0;
+    for (int i = 0; i < 2; ++i) rotate_canvas(canvases[i], pixels[i]);
+    return glass(rgb, 0);
+}
+
+int keypoint_preview_right(uint8_t *rgb, size_t size, int battery, bool charging,
+                           bool connected, int image) {
+    if (!rgb || size != CANVAS_SIZE * LPM_NATIVE_ROWS * 3 || battery < 0 || battery > 100 ||
+        image < 0 || (size_t)image >= keypoint_gallery_count) return -EINVAL;
+    init();
+    struct status_state status = {.battery = battery, .charging = charging};
+    keypoint_draw_peripheral_top(canvases[2], &status, connected);
+    rotate_canvas(canvases[2], overlay_pixels);
+    lv_img_set_src(art, keypoint_gallery[image].image);
+    return glass(rgb, 1);
 }

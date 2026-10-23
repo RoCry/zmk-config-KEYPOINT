@@ -11,19 +11,27 @@
 
 LV_IMG_DECLARE(bolt);
 
-void rotate_canvas(lv_obj_t *canvas, lv_color_t cbuf[]) {
+void rotate_canvas(lv_obj_t *canvas, void *pixels) {
     /* Exact quarter turn in place. LVGL 8.3's general transform both resamples
      * right-angle rotations and dereferences a refreshing display outside a
      * refresh callback. Integer permutation avoids both and needs no scratch. */
+    const size_t stride = lv_canvas_get_img(canvas)->header.cf == LV_IMG_CF_TRUE_COLOR_ALPHA ?
+        LV_IMG_PX_SIZE_ALPHA_BYTE : sizeof(lv_color_t);
+    uint8_t *cbuf = pixels;
     for (int first = 0; first < CANVAS_SIZE / 2; ++first) {
         int last = CANVAS_SIZE - 1 - first;
         for (int i = first; i < last; ++i) {
             int opposite = last - (i - first);
-            lv_color_t top = cbuf[first * CANVAS_SIZE + i];
-            cbuf[first * CANVAS_SIZE + i] = cbuf[i * CANVAS_SIZE + last];
-            cbuf[i * CANVAS_SIZE + last] = cbuf[last * CANVAS_SIZE + opposite];
-            cbuf[last * CANVAS_SIZE + opposite] = cbuf[opposite * CANVAS_SIZE + first];
-            cbuf[opposite * CANVAS_SIZE + first] = top;
+            uint8_t top[LV_IMG_PX_SIZE_ALPHA_BYTE];
+            size_t a = (first * CANVAS_SIZE + i) * stride;
+            size_t b = (i * CANVAS_SIZE + last) * stride;
+            size_t c = (last * CANVAS_SIZE + opposite) * stride;
+            size_t d = (opposite * CANVAS_SIZE + first) * stride;
+            memcpy(top, cbuf + a, stride);
+            memcpy(cbuf + a, cbuf + b, stride);
+            memcpy(cbuf + b, cbuf + c, stride);
+            memcpy(cbuf + c, cbuf + d, stride);
+            memcpy(cbuf + d, top, stride);
         }
     }
     lv_obj_invalidate(canvas);

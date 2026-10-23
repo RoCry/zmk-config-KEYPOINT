@@ -16,16 +16,17 @@
  * peripheral_status.c on the peripheral -- so every translation unit in an
  * image has to agree on this layout.
  *
- * Only the central draws a second (middle) canvas, so its buffer exists only
- * there, selected by the same CONFIG_KEYPOINT_LIVE_DATA the build selects the
- * implementation on. Handing the peripheral the spare buffer just to make the
- * shapes match would cost it CANVAS_SIZE^2 bytes of RAM it never touches. */
+ * Central: two RGB565 canvases. Peripheral: one RGB565+alpha overlay above
+ * fullscreen artwork. Conditional storage follows the implementation selected
+ * by CMake; neither half allocates buffers used only by the other. */
 struct zmk_widget_status {
     sys_snode_t node;
     lv_obj_t *obj;
-    lv_color_t cbuf[CANVAS_SIZE * CANVAS_SIZE];
 #if IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA)
+    lv_color_t cbuf[CANVAS_SIZE * CANVAS_SIZE];
     lv_color_t cbuf2[CANVAS_SIZE * CANVAS_SIZE];
+#else
+    uint8_t cbuf[LV_IMG_BUF_SIZE_TRUE_COLOR_ALPHA(CANVAS_SIZE, CANVAS_SIZE)];
 #endif
     struct status_state state;
 };

@@ -290,26 +290,6 @@ def test_widget_headers_declare_rather_than_define() -> None:
         assert "] = {" not in text, f"{header.name} defines a data table"
 
 
-def test_one_status_widget_struct_serves_both_halves() -> None:
-    """The status screen allocates the widget; CMake picks which half
-    implements it. One tag with one layout per image, or the peripheral
-    allocates the central's shape and reads a struct nobody wrote."""
-    status_h = STATUS_H.read_text()
-    screen = (ROOT / "config/boards/shields/lpm_view/custom_status_screen.c").read_text()
-    peripheral = (WIDGETS_DIR / "peripheral_status.c").read_text()
-    cmake = CMAKE.read_text()
-
-    assert not (WIDGETS_DIR / "peripheral_status.h").exists()
-    assert '#include "status.h"' in peripheral
-    assert '#include "widgets/status.h"' in screen
-
-    # The second canvas buffer exists exactly where the second canvas is drawn:
-    # under the same symbol CMake selects widgets/status.c on.
-    assert "#if IS_ENABLED(CONFIG_KEYPOINT_LIVE_DATA)\n    lv_color_t cbuf2[CANVAS_SIZE * CANVAS_SIZE];" in status_h
-    assert "if(CONFIG_KEYPOINT_LIVE_DATA)" in cmake
-    assert "cbuf2" not in peripheral
-
-
 def test_central_only_drawing_sources_stay_out_of_the_peripheral_image() -> None:
     """status.c's drawing helpers own the live-data icon bitmaps and the
     profile grid, neither of which the peripheral screen renders. Wired outside

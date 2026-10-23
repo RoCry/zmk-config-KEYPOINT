@@ -10,11 +10,17 @@ add_library(keypoint_preview SHARED
     ${SHIELD}/widgets/status_info_panel.c
     ${SHIELD}/widgets/status_layout.c
     ${SHIELD}/widgets/util.c
+    ${SHIELD}/widgets/display_surface.c
+    ${SHIELD}/widgets/picture/al_pacino.c
+    ${SHIELD}/widgets/picture/favorite_69b97550.c
+    ${SHIELD}/widgets/picture/rezaul_karim.c
+    ${SHIELD}/widgets/picture/minion.c
+    ${SHIELD}/widgets/gallery.c
     ${SHIELD}/widgets/theme.c
     ${SHIELD}/widgets/bolt.c
     ${SHIELD}/widgets/live_data_core.c
     ${SHIELD}/display_driver/lpm009m360a_core.c)
-target_compile_definitions(keypoint_preview PRIVATE CONFIG_KEYPOINT_LIVE_DATA=1 CONFIG_NICE_VIEW_WIDGET_INVERTED=0)
+target_compile_definitions(keypoint_preview PRIVATE CONFIG_KEYPOINT_LIVE_DATA=1)
 target_include_directories(keypoint_preview PRIVATE ${SHIELD}/widgets ${SHIELD}/display_driver)
 target_link_libraries(keypoint_preview PRIVATE lvgl m)
 target_compile_options(keypoint_preview PRIVATE -Wall -Wextra -Werror)

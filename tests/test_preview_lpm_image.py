@@ -166,11 +166,19 @@ def test_preview_cli_exports_color_comparison_and_decodes_asset(tmp_path: Path) 
         text=True,
     )
     with Image.open(preview) as decoded:
-        assert decoded.size == (120, 72)
+        assert decoded.size == (144, 72)
         assert decoded.getpixel((0, 0)) == (255, 0, 0, 255)
 
 
-def test_batch_preview_accepts_all_existing_indexed_formats(tmp_path: Path) -> None:
+def test_firmware_export_defaults_to_flat_palette_without_midtonal_noise(tmp_path: Path) -> None:
+    source = tmp_path / "gray.png"
+    Image.new("RGB", (72, 144), (100, 100, 100)).save(source)
+    asset = tmp_path / "gray.c"
+    write_firmware_c_array(source, asset, symbol="gray")
+    assert set(decode_c_array_preview(asset).get_flattened_data()) == {(0, 0, 0, 255)}
+
+
+def test_batch_preview_includes_fullscreen_portrait(tmp_path: Path) -> None:
     output = tmp_path / "batch"
     subprocess.run(
         [
@@ -188,7 +196,7 @@ def test_batch_preview_accepts_all_existing_indexed_formats(tmp_path: Path) -> N
         capture_output=True,
         text=True,
     )
-    assert {"al_pacino_from_c_x1.png", "david_from_c_x1.png"} <= {path.name for path in output.glob("*.png")}
+    assert "al_pacino_from_c_x1.png" in {path.name for path in output.glob("*.png")}
 
 
 if __name__ == "__main__":

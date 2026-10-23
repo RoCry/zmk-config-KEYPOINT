@@ -6,6 +6,7 @@
  */
 
 #include "widgets/status.h"
+#include "widgets/display_surface.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -18,6 +19,7 @@ lv_obj_t *zmk_display_status_screen() {
 
     lv_obj_t *screen;
     screen = lv_obj_create(NULL);
+    keypoint_style_surface(screen);
 
 #if IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_STATUS)
     zmk_widget_status_init(&status_widget, screen);

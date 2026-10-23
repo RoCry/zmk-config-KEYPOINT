@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 import shutil
 import subprocess
@@ -23,8 +24,8 @@ except ModuleNotFoundError:
     from lpm_c_array_preview import write_c_array_preview
     from lpm_palette import lvgl_palette_bytes, pack_indexed_4bit, quantize_panel
 
-DEFAULT_SIZE = (72, 120)
-DEFAULT_LOGICAL_SIZE = (120, 72)
+DEFAULT_SIZE = (72, 144)
+DEFAULT_LOGICAL_SIZE = (144, 72)
 DEFAULT_FIRMWARE_ROTATION = "ccw"
 REMOTE_RE = re.compile(r"^[A-Za-z0-9_.-]+:/")
 
@@ -148,7 +149,7 @@ def write_firmware_c_array(
     focus: tuple[float, float] = (0.5, 0.38),
     frame: str = "crop_face",
     rotation: str = DEFAULT_FIRMWARE_ROTATION,
-    dither: bool = True,
+    dither: bool = False,
 ) -> Path:
     if re.fullmatch(r"[A-Za-z_]\w*", symbol) is None:
         raise ValueError("firmware symbol must be a C identifier")
@@ -167,6 +168,10 @@ def write_firmware_c_array(
     macro = symbol_macro(symbol)
     data = lvgl_palette_bytes() + pixel_bytes
     source_text = f"""#include <lvgl.h>
+
+/* Source: {source.name}; SHA-256: {hashlib.sha256(source.read_bytes()).hexdigest()}
+ * Portrait {size[0]}x{size[1]}, {frame}, focus {focus[0]:g},{focus[1]:g}; rotation {rotation}.
+ * RGB111 quantization: {"Floyd-Steinberg" if dither else "nearest palette, no dithering"}. */
 
 #ifndef LV_ATTRIBUTE_MEM_ALIGN
 #define LV_ATTRIBUTE_MEM_ALIGN
@@ -320,7 +325,7 @@ def parse_args() -> argparse.Namespace:
         "--size",
         type=parse_size,
         default=DEFAULT_SIZE,
-        help="Device preview size, default 72x120 portrait",
+        help="Device preview size, default 72x144 fullscreen portrait",
     )
     parser.add_argument("--stem", help="Output filename stem")
     parser.add_argument(
@@ -352,7 +357,7 @@ def parse_args() -> argparse.Namespace:
         "--firmware-logical-size",
         type=parse_size,
         default=DEFAULT_LOGICAL_SIZE,
-        help="Logical LVGL image size for firmware output, default 120x72",
+        help="Logical LVGL image size for firmware output, default 144x72",
     )
     parser.add_argument(
         "--firmware-frame",
@@ -366,9 +371,10 @@ def parse_args() -> argparse.Namespace:
         help=f"Rotate portrait preview into firmware logical image, default {DEFAULT_FIRMWARE_ROTATION}",
     )
     parser.add_argument(
-        "--no-dither",
-        action="store_true",
-        help="Disable Floyd–Steinberg dithering in firmware output",
+        "--dither",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Enable Floyd–Steinberg dithering; default is clean, undithered color blocks",
     )
     parser.add_argument("--c-preview-out", type=Path, help="Output PNG path for --c-input")
     parser.add_argument(
@@ -427,7 +433,7 @@ def main() -> None:
                 focus=(args.focus_x, args.focus_y),
                 frame=args.firmware_frame,
                 rotation=args.firmware_rotation,
-                dither=not args.no_dither,
+                dither=args.dither,
             )
         )
 

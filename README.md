@@ -31,7 +31,9 @@ Those layer numbers live in two files that cannot see each other — `config/key
 
 ## Display
 
-Native glass: **72×144** portrait pixels; Zephyr/LVGL logical display: **144×72**. Shared UI keeps the status, live-data, profile and layer layout. Canvas rotation uses an exact in-place 90° permutation, with no duplicated center row/column or temporary rotation buffer.
+Native glass: **72×144** portrait pixels; Zephyr/LVGL logical display: **144×72**. Both screens use explicitly opaque black surfaces. Left: white body text, colored titles and thin quota bars with percentages, page dots, unboxed profile numbers and a small freshness mark. Two contiguous canvases cover all 144 rows. Canvas rotation uses an exact in-place 90° permutation for RGB565 and RGB565+alpha pixels.
+
+Right: native 72×144 fullscreen photos, with one 18px black status strip overlaid across the top. Image pixels below the strip remain unchanged; no padding, stretching or uncovered bottom edge. The four-image gallery advances every 60 seconds on the LVGL thread. Legacy non-fullscreen images were removed.
 
 LVGL renders RGB565; the driver thresholds each channel into the eight RGB111 colors (black, blue, green, cyan, red, magenta, yellow, white), packs 27 bytes per native row and sends compact RGB at **1 MHz**. Changed rows are tracked; failed transactions retain dirty rows for retry. `LV_Z_VDB_SIZE=100` keeps a full-frame draw buffer, avoiding repeated native-row writes from rotated horizontal stripes.
 
@@ -70,7 +72,7 @@ Firmware stages KP4 pages by `(GEN, TOTAL)` and only commits the visible deck af
 
 `widgets/live_data.h` and `live_data_core.c` under `config/boards/shields/lpm_view/` own the contract. `scripts/kp4.py` derives constants/enums and provides the tooling parser/builders; `kp4_contract.json` is its frozen producer copy. Preview, demo sender, diagnose probe and tests use this module.
 
-Producer reference: `~/w/_hw/rcink/producer/rcink/keypoint.py`; upgrade producer and firmware together. Rollout guide: `~/w/_hw/rcink/producer/docs/keypoint-kp4.md`. Its launchd sender runs directly from the working tree every 60 seconds when loaded. It has been unloaded for this upgrade; leave it unloaded until KP4 firmware is flashed and acknowledged writes pass.
+Producer reference: `~/w/_hw/rcink/producer/rcink/keypoint.py`; upgrade producer and firmware together. Rollout guide: `~/w/_hw/rcink/producer/docs/keypoint-kp4.md`. Its launchd sender runs directly from the working tree every 60 seconds when loaded. The KP4 upgrade was confirmed by acknowledged writes and a user photo; scheduled sending has resumed. The dark UI revision keeps the same protocol.
 
 ## Local Checks
 
@@ -79,7 +81,7 @@ just test
 just preview
 ```
 
-Requires `uv`, `cmake` and `ninja`. `scripts/build_preview.py` downloads checksum-pinned LVGL 8.3.7 and builds the firmware's shared `status_render.c`, theme, rotation and panel mapping into a native library. `scripts/preview_keypoint_status.py` emits RGB PNGs to `tmp/status-preview/`; it uses the actual LVGL renderer, with no separate Python drawing simulation.
+Requires `uv`, `cmake` and `ninja`. `scripts/build_preview.py` downloads checksum-pinned LVGL 8.3.7 and builds the firmware's shared drawing, object composition, gallery, rotation and panel mapping into a native library. `scripts/preview_keypoint_status.py` emits left UI and every right gallery image as RGB PNGs to `tmp/status-preview/`. Actual LVGL flush output includes parent backgrounds and image overlays; no separate Python drawing simulation.
 
 Preview one frame after building the native library:
 
@@ -89,7 +91,7 @@ uv run scripts/preview_keypoint_status.py --frame 'KP4|A0|0|1|CLAUDE|2|002021|CL
 
 ## Image conversion
 
-`scripts/preview_lpm_image.py` quantizes source RGB images to the same eight-color palette. Firmware export uses `LV_IMG_CF_INDEXED_4BIT`: eight palette entries plus padding for the 16-entry LVGL table, two pixels per byte. Floyd–Steinberg dithering is enabled by default; `--no-dither` disables it.
+`scripts/preview_lpm_image.py` quantizes source RGB images to the same eight-color palette. Firmware export uses `LV_IMG_CF_INDEXED_4BIT`: eight palette entries plus padding for the 16-entry LVGL table, two pixels per byte. Export defaults to **no dithering**, matching the user's selected D style for all four photos. `--dither` explicitly enables Floyd–Steinberg; preview contact sheets show both for comparison.
 
 Example Al Pacino regeneration from a retained original image:
 
@@ -98,4 +100,4 @@ uv run scripts/preview_lpm_image.py --input /path/to/al_pacino.jpg --stem al_pac
 uv run scripts/preview_lpm_image.py --c-input config/boards/shields/lpm_view/widgets/picture/al_pacino.c --c-preview-out tmp/al_pacino.png
 ```
 
-Defaults: portrait crop 72×120, `crop_face` framing, focus `(0.5, 0.38)`, counterclockwise rotation to logical 120×72. `--input` also accepts `host:/abs/path`; decoding supports indexed 1/2/4-bit assets. Use `--help` for crop, size, rotation and output options. Existing monochrome assets remain readable; Al Pacino is exported in eight colors.
+Defaults: portrait crop 72×144, `crop_face` framing, focus `(0.5, 0.38)`, counterclockwise rotation to logical 144×72. `--input` also accepts `host:/abs/path`; decoding supports indexed 1/2/4-bit assets. Use `--help` for crop, size, rotation and output options. Gallery assets record source basename/hash, crop parameters and quantization; originals stay outside git. Regression fixtures freeze the exact user-approved D preview pixels.

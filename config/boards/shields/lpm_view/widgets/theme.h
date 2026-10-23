@@ -13,4 +13,3 @@ enum keypoint_color keypoint_card_accent(enum keypoint_live_data_icon icon);
 enum keypoint_color keypoint_row_color(enum keypoint_live_data_row_role role,
                                       enum keypoint_color accent);
 enum keypoint_color keypoint_health_color(const struct keypoint_live_data_snapshot *snapshot);
-lv_color_t keypoint_on_color(enum keypoint_color background);

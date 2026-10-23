@@ -34,23 +34,5 @@ def test_every_display_source_is_wired_into_a_cmake_target() -> None:
     assert not wired - existing, f"CMake compiles missing sources: {sorted(wired - existing)}"
 
 
-def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
-    asset = LPM_VIEW / "widgets/picture/al_pacino.c"
-    status = (LPM_VIEW / "widgets/peripheral_status.c").read_text()
-
-    assert asset.is_file()
-    assert "widgets/picture/al_pacino.c" in wired_sources()
-    assert "LV_IMG_DECLARE(al_pacino);" in status
-    assert "&al_pacino" in status
-
-    source = asset.read_text()
-    assert "const lv_img_dsc_t al_pacino" in source
-    assert ".header.cf = LV_IMG_CF_INDEXED_4BIT" in source
-    assert ".header.w = 120" in source
-    assert ".header.h = 72" in source
-    assert ".data_size = 4384" in source
-
-
 if __name__ == "__main__":
     test_every_display_source_is_wired_into_a_cmake_target()
-    test_al_pacino_asset_is_wired_into_peripheral_firmware()

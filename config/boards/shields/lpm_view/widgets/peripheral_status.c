@@ -4,7 +4,6 @@
  */
 
 #include <zephyr/kernel.h>
-#include <zephyr/random/random.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -21,77 +20,34 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 #include "status.h"
 #include "theme.h"
-
-// ==================== 图片声明 ====================
-LV_IMG_DECLARE(astronaut);
-LV_IMG_DECLARE(macintosch);
-LV_IMG_DECLARE(david);
-LV_IMG_DECLARE(blackhole);
-LV_IMG_DECLARE(al_pacino);
+#include "display_surface.h"
+#include "gallery.h"
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
+static size_t current_image;
 
 // ==================== 状态结构体 ====================
 struct peripheral_status_state {
     bool connected;
 };
 
-// ==================== 图片数组 ====================
-static const lv_img_dsc_t *bunny_frames[] = {
-    &astronaut, &macintosch, &david, &blackhole, &al_pacino,
-};
-
-#define BUNNY_FRAME_COUNT (sizeof(bunny_frames) / sizeof(bunny_frames[0]))
-
-// ==================== 图片切换控制 ====================
-static uint8_t current_img_index = 0;
-static struct k_work_delayable img_switch_work;
-
 // ================= 顶部绘制 =================
-static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
-    lv_obj_t *canvas = lv_obj_get_child(widget, 0);
+static void draw_top(lv_obj_t *widget, uint8_t cbuf[], const struct status_state *state) {
+    lv_obj_t *canvas = lv_obj_get_child(widget, 1);
 
-    lv_draw_label_dsc_t label_dsc;
-    init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
-
-    lv_draw_rect_dsc_t rect_black_dsc;
-    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
-
-    // Fill background
-    lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
-
-    // Draw battery
-    draw_battery(canvas, state);
-
-    // Draw connection icon
-    label_dsc.color = keypoint_color(state->connected ? KP_GREEN : KP_RED);
-    lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc,
-                        state->connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE);
+    keypoint_draw_peripheral_top(canvas, state, state->connected);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
 }
 
-// ================= 图片切换函数 =================
-static void switch_image(struct k_work *work) {
+static void switch_image(lv_timer_t *timer) {
+    ARG_UNUSED(timer);
+    current_image = (current_image + 1) % keypoint_gallery_count;
     struct zmk_widget_status *widget;
-
-    uint8_t new_index;
-
-    do {
-        new_index = sys_rand32_get() % BUNNY_FRAME_COUNT;
-    } while (new_index == current_img_index); // 避免重复
-
-    current_img_index = new_index;
-
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
-        // art 是第2个 child（0=canvas, 1=img）
-        lv_obj_t *art = lv_obj_get_child(widget->obj, 1);
-        lv_img_set_src(art, bunny_frames[current_img_index]);
+        lv_img_set_src(lv_obj_get_child(widget->obj, 0), keypoint_gallery[current_image].image);
     }
-
-    // 重新调度 60 秒
-    k_work_schedule(&img_switch_work, K_SECONDS(60));
 }
 
 // ================= 电池状态 =================
@@ -147,32 +103,19 @@ ZMK_SUBSCRIPTION(widget_peripheral_status, zmk_split_peripheral_status_changed);
 
 // ================= 初始化 =================
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
-    widget->obj = lv_obj_create(parent);
-    lv_obj_set_size(widget->obj, 144, 72);
+    widget->obj = keypoint_create_surface(parent);
+    keypoint_create_art(widget->obj, keypoint_gallery[current_image].image);
+    keypoint_create_overlay(widget->obj, widget->cbuf);
 
-    // --- 顶部 canvas ---
-    lv_obj_t *top = lv_canvas_create(widget->obj);
-    lv_obj_align(top, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
-
-    // --- 初始随机图片 ---
-    current_img_index = sys_rand32_get() % BUNNY_FRAME_COUNT;
-
-    lv_obj_t *art = lv_img_create(widget->obj);
-    lv_img_set_src(art, bunny_frames[current_img_index]);
-    lv_obj_align(art, LV_ALIGN_TOP_LEFT, 20, 0);
-
+    bool first_widget = sys_slist_is_empty(&widgets);
     sys_slist_append(&widgets, &widget->node);
 
     widget_battery_status_init();
     widget_peripheral_status_init();
 
-    // 初始化定时器（只初始化一次）
-    static bool work_initialized = false;
-    if (!work_initialized) {
-        k_work_init_delayable(&img_switch_work, switch_image);
-        k_work_schedule(&img_switch_work, K_SECONDS(60));
-        work_initialized = true;
+    if (first_widget && keypoint_gallery_count > 1) {
+        /* LVGL owns the timer: image changes stay on the display thread. */
+        lv_timer_create(switch_image, 60000, NULL);
     }
 
     return 0;

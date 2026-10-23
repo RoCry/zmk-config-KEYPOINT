@@ -29,6 +29,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include "live_data.h"
 #include "status_layout.h"
 #include "status_render.h"
+#include "display_surface.h"
 
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
@@ -177,17 +178,9 @@ ZMK_DISPLAY_WIDGET_LISTENER(widget_layer_status, struct layer_status_state, laye
 ZMK_SUBSCRIPTION(widget_layer_status, zmk_layer_state_changed);
 
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
-    widget->obj = lv_obj_create(parent);
-    lv_obj_set_size(widget->obj, 144, 72);
-
-    // top battery status and output, wpm status
-    lv_obj_t *top = lv_canvas_create(widget->obj);
-    lv_obj_align(top, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
-    // middle connecion status
-    lv_obj_t *middle = lv_canvas_create(widget->obj);
-    lv_obj_align(middle, LV_ALIGN_TOP_LEFT, KEYPOINT_MIDDLE_X, 0);
-    lv_canvas_set_buffer(middle, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
+    widget->obj = keypoint_create_surface(parent);
+    keypoint_create_canvas(widget->obj, widget->cbuf, 0);
+    keypoint_create_canvas(widget->obj, widget->cbuf2, KEYPOINT_MIDDLE_X);
 
     /* One subscription covers every widget on the list, so register on the
      * first init only. */

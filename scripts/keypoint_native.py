@@ -40,7 +40,7 @@ class StatusState:
             if any(not 32 <= ord(c) <= 126 for c in self.layer_label):
                 raise ValueError("layer label must be printable ASCII")
             if len(self.layer_label.strip()) > 8:
-                raise ValueError("layer label exceeds 68-pixel display width")
+                raise ValueError("layer label exceeds 64-pixel display width")
 
 
 @lru_cache(maxsize=1)
@@ -62,6 +62,17 @@ def _library() -> ctypes.CDLL:
     lib.keypoint_preview.restype = ctypes.c_int
     lib.keypoint_preview_dimension.argtypes = [ctypes.c_int]
     lib.keypoint_preview_dimension.restype = ctypes.c_int
+    lib.keypoint_preview_right.argtypes = [
+        ctypes.POINTER(ctypes.c_uint8),
+        ctypes.c_size_t,
+        ctypes.c_int,
+        ctypes.c_bool,
+        ctypes.c_bool,
+        ctypes.c_int,
+    ]
+    lib.keypoint_preview_right.restype = ctypes.c_int
+    lib.keypoint_preview_image_name.argtypes = [ctypes.c_int]
+    lib.keypoint_preview_image_name.restype = ctypes.c_char_p
     return lib
 
 
@@ -101,3 +112,27 @@ def render_canvas(state: StatusState, frame: str | None, *, section: str, stale:
     if section not in ("top", "middle"):
         raise ValueError("section must be top or middle")
     return _render(state, frame, stale, 1 if section == "top" else 2)
+
+
+def right_images() -> tuple[str, ...]:
+    lib = _library()
+    names = []
+    while name := lib.keypoint_preview_image_name(len(names)):
+        names.append(name.decode("ascii"))
+    return tuple(names)
+
+
+def render_right_screen(
+    *, battery: int = 85, charging: bool = False, connected: bool = True, image: str = "al_pacino"
+) -> Image.Image:
+    names = right_images()
+    if not 0 <= battery <= 100 or image not in names:
+        raise ValueError("Invalid peripheral battery or image")
+    lib = _library()
+    width, height = lib.keypoint_preview_dimension(0), lib.keypoint_preview_dimension(1)
+    pixels = (ctypes.c_uint8 * (width * height * 3))()
+    with _LOCK:
+        result = lib.keypoint_preview_right(pixels, len(pixels), battery, charging, connected, names.index(image))
+    if result:
+        raise RuntimeError(f"Firmware peripheral renderer rejected input: {result}")
+    return Image.frombytes("RGB", (width, height), bytes(pixels))

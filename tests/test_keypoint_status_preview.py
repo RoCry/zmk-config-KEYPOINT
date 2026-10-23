@@ -37,54 +37,54 @@ def test_preview_directory_regeneration_preserves_non_images(tmp_path):
 def test_usage_bars_use_independent_producer_roles():
     top = render_canvas(STATE, FRAME, section="top")
     middle = render_canvas(STATE, FRAME, section="middle")
-    assert top.getpixel((1, 25)) == CYAN
-    assert top.getpixel((1, 53)) == YELLOW
-    assert top.getpixel((70, 53)) == WHITE
-    assert middle.getpixel((1, 15)) == GREEN
-    assert middle.getpixel((20, 15)) == WHITE
-    assert middle.getpixel((0, 14)) == BLACK
+    assert top.getpixel((1, 25)) == BLACK
+    assert top.getpixel((1, 57)) == YELLOW
+    assert top.getpixel((34, 57)) == BLACK
+    assert middle.getpixel((1, 17)) == GREEN
+    assert middle.getpixel((20, 17)) == BLACK
+    assert middle.getpixel((20, 18)) == BLUE
 
 
 def test_generic_completion_does_not_infer_warning_from_95_percent():
     frame = "KP4|A0|0|1|CODEX|0|000000|TASK|DONE|[095]|||"
-    assert render_canvas(STATE, frame, section="top").getpixel((1, 53)) == BLUE
+    assert render_canvas(STATE, frame, section="top").getpixel((1, 57)) == CYAN
 
 
 @pytest.mark.parametrize("role,color", [(1, GREEN), (2, CYAN), (3, YELLOW), (4, RED)])
-def test_semantic_text_has_contrasting_backing(role, color):
+def test_semantic_text_is_colored_ink_on_black(role, color):
     frame = kp4.build_frame("CODEX", "TASK", "RESULT", row_roles=(0, role, 0, 0, 0, 0))
-    row = render_canvas(STATE, frame, section="top").crop((0, 38, 72, 47))
-    assert row.getpixel((0, 0)) == color
-    assert BLACK in set(row.get_flattened_data())
+    row = render_canvas(STATE, frame, section="top").crop((0, 40, 72, 49))
+    assert row.getpixel((0, 0)) == BLACK
+    assert set(row.get_flattened_data()) == {BLACK, color}
 
 
-def test_stale_retains_data_and_adds_magenta_segmented_health():
+def test_stale_retains_data_and_splits_the_small_health_mark():
     fresh = render_canvas(STATE, FRAME, section="middle")
     stale = render_canvas(STATE, FRAME, section="middle", stale=True)
     assert fresh.crop((0, 0, 72, 36)).tobytes() == stale.crop((0, 0, 72, 36)).tobytes()
-    assert fresh.getpixel((10, 38)) == YELLOW
-    assert stale.getpixel((2, 38)) == MAGENTA
-    assert stale.getpixel((10, 38)) == WHITE
+    assert fresh.getpixel((69, 65)) == YELLOW
+    assert stale.getpixel((69, 64)) == MAGENTA
+    assert stale.getpixel((69, 65)) == BLACK
 
 
 def test_no_data_has_tip_without_title_or_health():
     top = render_canvas(STATE, None, section="top")
     middle = render_canvas(STATE, None, section="middle")
-    assert top.getpixel((1, 25)) == WHITE
-    assert BLUE in set(top.crop((8, 31, 64, 52)).get_flattened_data())
-    assert set(middle.crop((0, 38, 72, 40)).get_flattened_data()) == {WHITE}
+    assert top.getpixel((1, 25)) == BLACK
+    assert WHITE in set(top.crop((8, 31, 64, 54)).get_flattened_data())
+    assert set(middle.crop((68, 64, 71, 67)).get_flattened_data()) == {BLACK}
 
 
 def test_exact_rotation_places_battery_and_profiles_without_resampling():
     glass = render_left_screen(STATE, FRAME)
     top = render_canvas(STATE, FRAME, section="top")
     middle = render_canvas(STATE, FRAME, section="middle")
-    # Geometry contract: top0..67, second canvas starts68; last4 rows blank.
-    assert glass.crop((0, 0, 72, 68)).tobytes() == top.crop((0, 0, 72, 68)).tobytes()
-    assert glass.crop((0, 68, 72, 140)).tobytes() == middle.tobytes()
-    assert glass.getpixel((0, 2)) == BLACK
-    assert glass.getpixel((2, 111)) == BLUE
-    assert set(glass.crop((0, 140, 72, 144)).get_flattened_data()) == {WHITE}
+    # Two contiguous 72px sections: no overlap or uncovered 4px bottom strip.
+    assert glass.crop((0, 0, 72, 72)).tobytes() == top.tobytes()
+    assert glass.crop((0, 72, 72, 144)).tobytes() == middle.tobytes()
+    assert glass.getpixel((0, 2)) == WHITE
+    assert glass.getpixel((2, 126)) == CYAN
+    assert set(glass.crop((0, 141, 72, 144)).get_flattened_data()) == {BLACK}
 
 
 @pytest.mark.parametrize(
@@ -95,22 +95,22 @@ def test_battery_state_color(battery, charging, color):
     assert render_canvas(state, FRAME, section="top").getpixel((3, 4)) == color
 
 
-def test_page_thumb_moves_without_changing_card_title():
+def test_page_dots_move_without_changing_card_title():
     first = kp4.build_frame("CODEX", "TASK", index=0, total=3)
     last = kp4.build_frame("CODEX", "TASK", index=2, total=3)
     left = render_canvas(STATE, first, section="top")
     right = render_canvas(STATE, last, section="top")
-    assert left.getpixel((2, 19)) == BLUE
-    assert left.getpixel((69, 19)) == WHITE
-    assert right.getpixel((2, 19)) == WHITE
-    assert right.getpixel((69, 19)) == BLUE
-    assert right.getpixel((2, 25)) == BLUE
+    assert left.getpixel((29, 21)) == CYAN
+    assert left.getpixel((41, 21)) == BLACK
+    assert right.getpixel((29, 21)) == BLACK
+    assert right.getpixel((41, 21)) == CYAN
+    assert left.crop((0, 26, 72, 34)).tobytes() == right.crop((0, 26, 72, 34)).tobytes()
 
 
 @pytest.mark.parametrize("icon", kp4.ICON_NAMES)
 def test_each_icon_renders_without_crash(icon):
     image = render_canvas(STATE, kp4.build_frame(icon, icon), section="top")
-    occupied = set(image.crop((34, 0, 50, 16)).get_flattened_data()) - {WHITE}
+    occupied = set(image.crop((34, 0, 50, 16)).get_flattened_data()) - {BLACK}
     assert bool(occupied) == (icon != "NONE")
 
 

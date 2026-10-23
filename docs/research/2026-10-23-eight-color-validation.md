@@ -1,6 +1,6 @@
 # Eight-color validation — 2026-10-23
 
-Scope: RGB565 → compact RGB111 driver, shared color UI, KP4 row roles, producer, image conversion and native LVGL preview. Software validation complete; manual UF2 upgrade and physical acceptance pending.
+Initial scope: RGB565 → compact RGB111 driver, shared color UI, KP4 row roles, producer, image conversion and native LVGL preview. Initial software evidence below; subsequent device evidence and dark UI revision recorded at the end.
 
 ## Host checks
 
@@ -33,3 +33,18 @@ These are local build hashes, not GitHub Actions artifact hashes. Delivery uses 
 Not verified: physical colors/readability/orientation, DISP/EXTCOMIN wiring, COM behavior, cold start, wake, power. Switching a live mono panel to RGB may require a full power/DISP reset. User chose preview first, then manual upgrade from Actions UF2. No device flashed.
 
 KEYPOINT launchd sender was unloaded because it reads the producer working tree every minute; leave it paused until KP4 firmware and an acknowledged deck succeed. Other producer fetching remains active. Resume sequence: `rcink/producer/docs/keypoint-kp4.md`.
+
+## Subsequent device evidence and dark UI revision
+
+User manually flashed initial Actions artifacts from run `39911617016` (`7f290fd`). Photos show colored battery/connection/profile UI and Al Pacino. At 14:40, five KP4 frames succeeded with acknowledged writes; subsequent photo showed CLAUDE 5H/7D/scoped rows. Scheduled sender resumed at 14:42; later five-card deliveries continued with `response=True`. Initial NO DATA was consistent with the intentionally paused sender, not a reproduced parser failure.
+
+Photographed white bottom strip reproduced as 4 uncovered portrait rows: logical x20 + image width120 =140, screen width144. Image decoding excluded white padding in the asset. Dark revision uses native fullscreen144×72 assets, one18px full-width overlay, and explicitly black parent surfaces.
+
+Dark revision: 300 host tests passed, including independent decoded-photo pixels across the whole region below the overlay, repeated charging/image updates, and frozen pixel hashes of all four user-approved D previews. Export defaults to no dithering; a midtone fixture catches accidental diffusion. Native preview now executes full shared LVGL object composition, replacing manual canvas copying. Code review found no actionable defects.
+
+| Dark revision | FLASH | RAM | UF2 bytes |
+|---|---:|---:|---:|
+| Left | 435,828 | 132,730 | 871,936 |
+| Right | 345,504 | 97,756 | 691,200 |
+
+Both builds passed using the same local toolchain above. Evidence: `tmp/dark-firmware/`. User chose D for all four images: nearest RGB111 palette, no dithering; exported pixels match the selected PNGs exactly. Dark revision has not been flashed. COM, wake, power and detailed physical readability remain unverified.
