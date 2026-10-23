@@ -9,9 +9,10 @@
 
 #include <string.h>
 
-#include <zephyr/kernel.h>
+#include <stdio.h>
 
 #include "status_layout.h"
+#include "theme.h"
 
 static void draw_rect_outline(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y, lv_coord_t width,
                               lv_coord_t height, const lv_draw_rect_dsc_t *rect_dsc) {
@@ -47,28 +48,34 @@ static void draw_profile_open_slot(lv_obj_t *canvas, lv_coord_t x, lv_coord_t y,
 static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state, uint8_t index,
                               lv_coord_t x, lv_coord_t y,
                               const lv_draw_rect_dsc_t *foreground_rect_dsc,
-                              const lv_draw_rect_dsc_t *background_rect_dsc,
                               const lv_draw_label_dsc_t *foreground_label_dsc,
                               const lv_draw_label_dsc_t *background_label_dsc) {
     const bool active = index == state->active_profile_index;
     const bool connected = state->profile_connected[index];
     const bool bonded = state->profile_bonded[index];
-    const lv_draw_rect_dsc_t *status_rect_dsc = active ? background_rect_dsc : foreground_rect_dsc;
+    static const enum keypoint_color accents[] = {KP_BLUE, KP_CYAN, KP_GREEN, KP_MAGENTA};
+    lv_draw_rect_dsc_t slot_dsc = *foreground_rect_dsc;
+    slot_dsc.bg_color = keypoint_color(accents[index]);
+    lv_draw_label_dsc_t active_label = *background_label_dsc;
+    active_label.color = keypoint_on_color(accents[index]);
+    lv_draw_rect_dsc_t mark_dsc = *foreground_rect_dsc;
+    mark_dsc.bg_color = active ? active_label.color : keypoint_color(connected ? KP_GREEN : KP_BLUE);
+    const lv_draw_rect_dsc_t *status_rect_dsc = &mark_dsc;
     char label[2];
 
     if (active) {
         lv_canvas_draw_rect(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
-                            KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
+                            KEYPOINT_PROFILE_SLOT_HEIGHT, &slot_dsc);
     } else if (bonded) {
         draw_rect_outline(canvas, x, y, KEYPOINT_PROFILE_SLOT_WIDTH,
-                          KEYPOINT_PROFILE_SLOT_HEIGHT, foreground_rect_dsc);
+                          KEYPOINT_PROFILE_SLOT_HEIGHT, &slot_dsc);
     } else {
-        draw_profile_open_slot(canvas, x, y, foreground_rect_dsc);
+        draw_profile_open_slot(canvas, x, y, &slot_dsc);
     }
 
-    snprintk(label, sizeof(label), "%u", index + 1);
-    lv_canvas_draw_text(canvas, x + 1, y + 1, 9, active ? background_label_dsc : foreground_label_dsc,
-                        label);
+    snprintf(label, sizeof(label), "%u", index + 1);
+    lv_draw_label_dsc_t slot_label = active ? active_label : *foreground_label_dsc;
+    lv_canvas_draw_text(canvas, x + 1, y + 1, 9, &slot_label, label);
 
     const lv_coord_t mark_x = x + KEYPOINT_PROFILE_MARK_X_OFFSET;
     const lv_coord_t mark_y = y + KEYPOINT_PROFILE_MARK_Y_OFFSET;
@@ -85,7 +92,6 @@ static void draw_profile_slot(lv_obj_t *canvas, const struct status_state *state
 
 void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state,
                        const lv_draw_rect_dsc_t *foreground_rect_dsc,
-                       const lv_draw_rect_dsc_t *background_rect_dsc,
                        const lv_draw_label_dsc_t *foreground_label_dsc,
                        const lv_draw_label_dsc_t *background_label_dsc) {
     /* Four 15px slots spread flush across the 72px glass (0..71) with even 4px
@@ -99,7 +105,7 @@ void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state,
 
     for (uint8_t i = 0; i < KEYPOINT_STATUS_PROFILE_COUNT; i++) {
         draw_profile_slot(canvas, state, i, slot_offsets[i][0], slot_offsets[i][1],
-                          foreground_rect_dsc, background_rect_dsc, foreground_label_dsc,
+                          foreground_rect_dsc, foreground_label_dsc,
                           background_label_dsc);
     }
 }
@@ -141,7 +147,7 @@ static const char *layer_info_text(const struct status_state *state, char *fallb
         }
     }
 
-    snprintk(fallback, fallback_size, "L%u", state->layer_index);
+    snprintf(fallback, fallback_size, "L%u", state->layer_index);
     return fallback;
 }
 
@@ -150,6 +156,8 @@ void draw_layer_info(lv_obj_t *canvas, const struct status_state *state,
     char fallback[16] = {};
     const char *label = layer_info_text(state, fallback, sizeof(fallback));
 
+    lv_draw_label_dsc_t text = *label_dsc;
+    text.color = keypoint_color(state->layer_index == 0 ? KP_BLUE : KP_MAGENTA);
     lv_canvas_draw_text(canvas, KEYPOINT_LAYER_TEXT_X, KEYPOINT_LAYER_TEXT_Y,
-                        KEYPOINT_LAYER_TEXT_WIDTH, label_dsc, label);
+                        KEYPOINT_LAYER_TEXT_WIDTH, &text, label);
 }

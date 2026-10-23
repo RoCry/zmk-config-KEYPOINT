@@ -18,7 +18,6 @@
 
 void draw_profile_grid(lv_obj_t *canvas, const struct status_state *state,
                        const lv_draw_rect_dsc_t *foreground_rect_dsc,
-                       const lv_draw_rect_dsc_t *background_rect_dsc,
                        const lv_draw_label_dsc_t *foreground_label_dsc,
                        const lv_draw_label_dsc_t *background_label_dsc);
 

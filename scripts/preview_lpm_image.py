@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["pillow>=11.0"]
+# dependencies = ["pillow>=12.2"]
 # ///
 
 from __future__ import annotations
@@ -13,13 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 try:
     from lpm_c_array_preview import write_c_array_preview
+    from lpm_palette import lvgl_palette_bytes, pack_indexed_4bit, quantize_panel
 except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from lpm_c_array_preview import write_c_array_preview
+    from lpm_palette import lvgl_palette_bytes, pack_indexed_4bit, quantize_panel
 
 DEFAULT_SIZE = (72, 120)
 DEFAULT_LOGICAL_SIZE = (120, 72)
@@ -104,36 +106,6 @@ def framing_variants(
     return variants
 
 
-def to_gray(image: Image.Image) -> Image.Image:
-    return ImageOps.grayscale(image)
-
-
-def to_contrast_gray(image: Image.Image) -> Image.Image:
-    gray = ImageOps.autocontrast(to_gray(image), cutoff=2)
-    return ImageEnhance.Contrast(gray).enhance(1.35)
-
-
-def quantize_gray(image: Image.Image, levels: int, dither: bool) -> Image.Image:
-    if levels < 2:
-        raise ValueError("levels must be >= 2")
-
-    gray = to_contrast_gray(image)
-    dither_mode = Image.Dither.FLOYDSTEINBERG if dither else Image.Dither.NONE
-
-    if levels == 2:
-        return gray.convert("1", dither=dither_mode)
-
-    palette = Image.new("P", (1, 1))
-    values = [round(i * 255 / (levels - 1)) for i in range(levels)]
-    palette_values: list[int] = []
-    for value in values:
-        palette_values.extend([value, value, value])
-    palette_values.extend([0] * (768 - len(palette_values)))
-    palette.putpalette(palette_values)
-
-    return gray.convert("RGB").quantize(palette=palette, dither=dither_mode).convert("L")
-
-
 def symbol_macro(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", symbol).strip("_").upper()
 
@@ -158,23 +130,6 @@ def rotate_for_firmware(image: Image.Image, rotation: str) -> Image.Image:
             raise ValueError("firmware rotation must be one of: cw, ccw, none")
 
 
-def pack_indexed_1bit(image: Image.Image) -> bytes:
-    bitmap = image.convert("L")
-    stride = (bitmap.width + 7) // 8
-    packed = bytearray()
-
-    for y in range(bitmap.height):
-        for byte_index in range(stride):
-            value = 0
-            for bit in range(8):
-                x = byte_index * 8 + bit
-                if x < bitmap.width and bitmap.getpixel((x, y)) > 127:
-                    value |= 1 << (7 - bit)
-            packed.append(value)
-
-    return bytes(packed)
-
-
 def format_hex_bytes(data: bytes, indent: str = "    ", per_line: int = 16) -> str:
     lines: list[str] = []
     for start in range(0, len(data), per_line):
@@ -193,24 +148,24 @@ def write_firmware_c_array(
     focus: tuple[float, float] = (0.5, 0.38),
     frame: str = "crop_face",
     rotation: str = DEFAULT_FIRMWARE_ROTATION,
-    invert_pixels: bool = False,
+    dither: bool = True,
 ) -> Path:
+    if re.fullmatch(r"[A-Za-z_]\w*", symbol) is None:
+        raise ValueError("firmware symbol must be a C identifier")
     with Image.open(source) as original:
         frames = framing_variants(original, size=size, focus=focus)
         portrait = select_named_image(frames, frame)
 
-    dithered = quantize_gray(portrait, levels=2, dither=True).convert("L")
+    dithered = quantize_panel(portrait, dither=dither)
     logical = rotate_for_firmware(dithered, rotation)
-    if invert_pixels:
-        logical = ImageOps.invert(logical)
     if logical.size != logical_size:
         raise ValueError(
             f"firmware image became {logical.size[0]}x{logical.size[1]}, expected {logical_size[0]}x{logical_size[1]}"
         )
 
-    pixel_bytes = pack_indexed_1bit(logical)
+    pixel_bytes = pack_indexed_4bit(logical)
     macro = symbol_macro(symbol)
-    data_size = 8 + len(pixel_bytes)
+    data = lvgl_palette_bytes() + pixel_bytes
     source_text = f"""#include <lvgl.h>
 
 #ifndef LV_ATTRIBUTE_MEM_ALIGN
@@ -222,24 +177,18 @@ def write_firmware_c_array(
 #endif
 
 const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_IMG_{macro} uint8_t {symbol}_map[] = {{
-#if CONFIG_NICE_VIEW_WIDGET_INVERTED
-    0xff, 0xff, 0xff, 0xff, /*Color of index 0*/
-    0x00, 0x00, 0x00, 0xff, /*Color of index 1*/
-#else
-    0x00, 0x00, 0x00, 0xff, /*Color of index 0*/
-    0xff, 0xff, 0xff, 0xff, /*Color of index 1*/
-#endif
-
-{format_hex_bytes(pixel_bytes)}
+    /* RGB111 palette: black, blue, green, cyan, red, magenta, yellow, white.
+     * LVGL BGRA entries; unused indices 8..15 are opaque black. */
+{format_hex_bytes(data)}
 }};
 
 const lv_img_dsc_t {symbol} = {{
-    .header.cf = LV_IMG_CF_INDEXED_1BIT,
+    .header.cf = LV_IMG_CF_INDEXED_4BIT,
     .header.always_zero = 0,
     .header.reserved = 0,
     .header.w = {logical_size[0]},
     .header.h = {logical_size[1]},
-    .data_size = {data_size},
+    .data_size = {len(data)},
     .data = {symbol}_map,
 }};
 """
@@ -249,11 +198,12 @@ const lv_img_dsc_t {symbol} = {{
 
 
 def draw_label(draw: ImageDraw.ImageDraw, xy: tuple[int, int], text: str) -> None:
-    draw.text(xy, text, fill=0)
+    draw.text(xy, text, fill="black")
 
 
 def write_contact_sheet(variants: list[tuple[str, Image.Image]], output: Path) -> Path:
     tile_w, tile_h = variants[0][1].size
+    tile_w = max(tile_w, 100)
     padding = 10
     label_h = 14
     cols = 3
@@ -261,7 +211,7 @@ def write_contact_sheet(variants: list[tuple[str, Image.Image]], output: Path) -
     sheet_w = cols * tile_w + (cols + 1) * padding
     sheet_h = rows * (tile_h + label_h) + (rows + 1) * padding
 
-    sheet = Image.new("L", (sheet_w, sheet_h), 255)
+    sheet = Image.new("RGB", (sheet_w, sheet_h), "white")
     draw = ImageDraw.Draw(sheet)
 
     for index, (name, variant) in enumerate(variants):
@@ -269,7 +219,7 @@ def write_contact_sheet(variants: list[tuple[str, Image.Image]], output: Path) -
         col = index % cols
         x = padding + col * (tile_w + padding)
         y = padding + row * (tile_h + label_h + padding)
-        sheet.paste(variant.convert("L"), (x, y))
+        sheet.paste(variant.convert("RGB"), (x, y))
         draw_label(draw, (x, y + tile_h + 2), name)
 
     sheet.save(output)
@@ -304,15 +254,13 @@ def generate_previews(
         fitted = frames[0][1]
 
     variants = [
-        ("gray", to_gray(fitted)),
-        ("contrast", to_contrast_gray(fitted)),
-        ("4level", quantize_gray(fitted, levels=4, dither=False)),
-        ("4level_dither", quantize_gray(fitted, levels=4, dither=True)),
-        ("1bit_dither", quantize_gray(fitted, levels=2, dither=True)),
+        ("source_rgb", fitted),
+        ("8color", quantize_panel(fitted, dither=False)),
+        ("8color_dither", quantize_panel(fitted)),
     ]
 
     written: list[Path] = []
-    frame_previews = [(frame_name, to_contrast_gray(frame)) for frame_name, frame in frames]
+    frame_previews = [(frame_name, quantize_panel(frame)) for frame_name, frame in frames]
     for frame_name, image in frame_previews:
         path = output_dir / f"{name}_frame_{frame_name}.png"
         image.save(path)
@@ -358,10 +306,10 @@ def copy_for_preview(input_path: str, output_dir: Path) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create keyboard-sized grayscale previews and optional LVGL C arrays.")
+    parser = argparse.ArgumentParser(description="Create RGB111 eight-color previews and optional LVGL C arrays.")
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--input", help="Local image path or remote form host:/abs/path")
-    input_group.add_argument("--c-input", type=Path, help="Existing LVGL INDEXED_1BIT C array to decode into a PNG")
+    input_group.add_argument("--c-input", type=Path, help="Existing LVGL indexed 1/2/4-bit C array to decode")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -398,7 +346,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also write 90/270 degree rotation candidates for display-orientation debugging",
     )
-    parser.add_argument("--firmware-c-out", type=Path, help="Optional output path for a LVGL INDEXED_1BIT C array")
+    parser.add_argument("--firmware-c-out", type=Path, help="Optional output path for a LVGL INDEXED_4BIT C array")
     parser.add_argument("--firmware-symbol", help="C symbol name for --firmware-c-out, default: --stem/input stem")
     parser.add_argument(
         "--firmware-logical-size",
@@ -418,9 +366,9 @@ def parse_args() -> argparse.Namespace:
         help=f"Rotate portrait preview into firmware logical image, default {DEFAULT_FIRMWARE_ROTATION}",
     )
     parser.add_argument(
-        "--firmware-invert-pixels",
+        "--no-dither",
         action="store_true",
-        help="Invert packed 1-bit firmware pixels before writing the C array",
+        help="Disable Floyd–Steinberg dithering in firmware output",
     )
     parser.add_argument("--c-preview-out", type=Path, help="Output PNG path for --c-input")
     parser.add_argument(
@@ -430,9 +378,9 @@ def parse_args() -> argparse.Namespace:
         help="Nearest-neighbor scale for --c-input preview, default 4",
     )
     parser.add_argument(
-        "--c-preview-raw-bits",
+        "--widget-inverted",
         action="store_true",
-        help="Do not invert --c-input pixels; show stored bitmap bits directly",
+        help="Select CONFIG_NICE_VIEW_WIDGET_INVERTED palette branch in legacy C inputs",
     )
     return parser.parse_args()
 
@@ -447,7 +395,7 @@ def main() -> None:
                 args.c_input,
                 args.c_preview_out,
                 scale=args.c_preview_scale,
-                invert=not args.c_preview_raw_bits,
+                widget_inverted=args.widget_inverted,
             )
         )
         return
@@ -479,7 +427,7 @@ def main() -> None:
                 focus=(args.focus_x, args.focus_y),
                 frame=args.firmware_frame,
                 rotation=args.firmware_rotation,
-                invert_pixels=args.firmware_invert_pixels,
+                dither=not args.no_dither,
             )
         )
 

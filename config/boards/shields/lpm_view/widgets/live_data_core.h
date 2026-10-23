@@ -11,7 +11,7 @@
 #include "live_data.h"
 
 /*
- * Pure KP3 deck logic: frame parse, deck staging, page wrap, staleness.
+ * Pure KP4 deck logic: frame parse, deck staging, page wrap, staleness.
  *
  * No Zephyr, no LVGL, no globals, no clock of its own. The caller owns the
  * deck state, supplies `now_ms`, and does its own locking. That is what makes
@@ -22,6 +22,7 @@
 struct keypoint_live_data_card {
     enum keypoint_live_data_icon icon;
     enum keypoint_live_data_led_hint led_hint;
+    enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT];
     char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
     bool has_data;
     int64_t update_ms;
@@ -50,6 +51,7 @@ struct keypoint_live_data_deck {
 bool keypoint_live_data_core_store(struct keypoint_live_data_deck *deck, uint8_t generation,
                                    uint8_t idx, uint8_t total, enum keypoint_live_data_icon icon,
                                    enum keypoint_live_data_led_hint led_hint,
+                                   const enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT],
                                    char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                              [KEYPOINT_LIVE_DATA_LINE_MAX + 1],
                                    int64_t now_ms);

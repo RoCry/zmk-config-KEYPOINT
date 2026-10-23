@@ -10,7 +10,7 @@ real producers write WITHOUT response, which silently hides whether the
 firmware accepted or rejected the frame). With response, the firmware's GATT
 accept/reject is visible -- which tells us exactly what is wrong.
 
-The probe is built by `scripts/kp3.py` at run time, from the same builders the
+The probe is built by `scripts/kp4.py` at run time, from the same builders the
 demo sender and the producer use. That matters: a hardcoded frame would keep
 probing with yesterday's grammar, so a rejection would no longer distinguish
 "the firmware is stale" from "this script is stale" -- the one question this
@@ -23,8 +23,8 @@ Interpret the output:
   * PROBE ACCEPTED (display shows SUNNY) -> new firmware works;
                             the earlier NO DATA was a stale/failed send.
   * PROBE rejected -> firmware/parser/protocol mismatch. Flash the latest
-                            left.uf2 so the firmware speaks the same KP3
-                            grammar kp3.py just derived from these sources.
+                            left.uf2 so the firmware speaks the same KP4
+                            grammar kp4.py just derived from these sources.
   * connection / encryption error -> transport/pairing problem, not the parser.
 """
 
@@ -41,7 +41,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-import kp3  # noqa: E402
+import kp4  # noqa: E402
 
 # Reuse the demo sender's device-resolution + UUIDs (single source of truth).
 _DEMO = _SCRIPT_DIR / "send_keypoint_live_demo.py"
@@ -50,14 +50,14 @@ demo = importlib.util.module_from_spec(_spec)
 sys.modules["send_keypoint_live_demo"] = demo  # slotted @dataclass needs this registered
 _spec.loader.exec_module(demo)
 
-PROBE_FRAME = kp3.build_frame(
+PROBE_FRAME = kp4.build_frame(
     "SUN",
-    kp3.title("SUNNY"),
-    kp3.kv("TMP", "24C"),
+    kp4.title("SUNNY"),
+    kp4.kv("TMP", "24C"),
     "12:00",
-    kp3.kv("UV", "5"),
-    kp3.kv("HUM", "40%"),
-    kp3.kv("AQI", "42"),
+    kp4.kv("UV", "5"),
+    kp4.kv("HUM", "40%"),
+    kp4.kv("AQI", "42"),
     generation=0xA0,
 )
 

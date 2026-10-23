@@ -1,5 +1,5 @@
 {
-  "frame_max": 81,
+  "frame_max": 88,
   "generation_field_max": 2,
   "icon_acceptance_chain": [
     "NONE",
@@ -44,7 +44,14 @@
   "line_max": 9,
   "page_field_max": 1,
   "page_max": 8,
-  "prefix": "KP3|",
+  "prefix": "KP4|",
+  "row_role_names": [
+    "NEUTRAL",
+    "POSITIVE",
+    "ATTENTION",
+    "WARNING",
+    "ERROR"
+  ],
   "stale_ms": 360000,
   "text_line_count": 6
 }

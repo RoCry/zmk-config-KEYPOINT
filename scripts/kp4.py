@@ -3,27 +3,12 @@
 # requires-python = ">=3.13"
 # dependencies = []
 # ///
-"""The KP3 contract: one derived home for the frame grammar.
+"""KP4 contract, derived from live_data.h and the C parser at import.
 
-Every contract value here is parsed out of the firmware C sources at import
-time -- nothing is restated. `live_data.h` owns the macros and the icon /
-LED-hint enums; the widget `.c` sources own the acceptance chains that decide
-which icon and LED spellings a GATT write may carry. If the firmware moves,
-this module either follows it or fails loudly at import; it never drifts
-quietly.
-
-Grammar (see CONTEXT.md for the vocabulary):
-
-    KP3|GEN|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6
-
-`parse()` is the single Python KP3 parser and rejects exactly what
-`keypoint_live_data_parse()` rejects. `build_frame()` and the `kv` / `title` /
-`bar` / card helpers are the single set of builders -- the preview, the BLE
-demo sender, the diagnose probe and the rcink producer all go through them so
-producer and firmware cannot disagree about the wire.
-
-Stdlib only, on purpose: CI installs no BLE or CLI dependencies, so this
-module has to be importable from any test.
+Grammar: KP4|GEN|IDX|TOTAL|ICON|LED|ROLES|L1|L2|L3|L4|L5|L6.
+ROLES carries six semantic codes, never physical colours. All tooling and the
+rcink producer share these parsers/builders. Stdlib only; source drift fails
+at import. Vendored copies use the frozen contract when C sources are absent.
 """
 
 from __future__ import annotations
@@ -39,7 +24,7 @@ ROOT: Final = Path(__file__).resolve().parent.parent
 WIDGETS_DIR: Final = ROOT / "config/boards/shields/lpm_view/widgets"
 CONTRACT_HEADER: Final = WIDGETS_DIR / "live_data.h"
 #: Frozen contract for vendored copies that ship without the firmware tree.
-CONTRACT_SNAPSHOT: Final = Path(__file__).resolve().with_name("kp3_contract.json")
+CONTRACT_SNAPSHOT: Final = Path(__file__).resolve().with_name("kp4_contract.json")
 
 
 class ContractError(RuntimeError):
@@ -60,12 +45,7 @@ def _header_source() -> str:
 
 
 def _widget_c_sources() -> list[str]:
-    """Every .c under the display shield's widgets dir, deepest first.
-
-    The acceptance chains live in whichever implementation file currently
-    holds the parser; searching the directory keeps this seam attached to the
-    behaviour rather than to a filename.
-    """
+    """Find acceptance chains independent of which C file owns the parser."""
     return [path.read_text() for path in sorted(WIDGETS_DIR.rglob("*.c"))]
 
 
@@ -125,7 +105,7 @@ def _parse_frame_max(source: str, prefix: str, macros: dict[str, int]) -> int:
         raise ContractError("KEYPOINT_LIVE_DATA_FRAME_MAX not found")
 
     expression = re.sub(r"\\\s*\n", " ", match.group(1))
-    # sizeof("KP3|") counts the NUL terminator the C macro then subtracts.
+    # sizeof("KP4|") counts the NUL terminator the C macro then subtracts.
     expression = expression.replace("sizeof(KEYPOINT_LIVE_DATA_PREFIX)", str(len(prefix) + 1))
     expression = re.sub(
         r"KEYPOINT_LIVE_DATA_(\w+)",
@@ -179,19 +159,16 @@ def derive_from_firmware() -> dict[str, object]:
         "led_hint_names": list(
             _parse_enum_names(header, "keypoint_live_data_led_hint", "KEYPOINT_LIVE_DATA_LED_HINT_")
         ),
+        "row_role_names": list(
+            _parse_enum_names(header, "keypoint_live_data_row_role", "KEYPOINT_LIVE_DATA_ROW_ROLE_")
+        ),
         "icon_acceptance_chain": list(_parse_acceptance_chain("icon_from_field")),
         "led_acceptance_chain": list(_parse_acceptance_chain("led_hint_from_field")),
     }
 
 
 def _load_contract() -> dict[str, object]:
-    """Derive from the firmware when it is present, else from the frozen copy.
-
-    kp3 is vendored into producers that have no firmware checkout (see the
-    rcink reference producer). `--freeze` writes the snapshot beside this
-    module; a test in this repo regenerates it and fails on any difference, so
-    the frozen copy cannot drift away from the C it was taken from.
-    """
+    """Prefer firmware sources; vendored copies use the checked frozen contract."""
     if CONTRACT_HEADER.is_file():
         return derive_from_firmware()
     if CONTRACT_SNAPSHOT.is_file():
@@ -219,9 +196,11 @@ LED_HINTS: Final[dict[str, int]] = dict(
     zip(_CONTRACT["led_acceptance_chain"], range(len(LED_HINT_NAMES)), strict=True)  # type: ignore[arg-type]
 )
 LED_CODES: Final[tuple[int, ...]] = tuple(LED_HINTS.values())
+ROW_ROLE_NAMES: Final[tuple[str, ...]] = tuple(_CONTRACT["row_role_names"])
+ROW_ROLE_CODES: Final[tuple[int, ...]] = tuple(range(len(ROW_ROLE_NAMES)))
 
 #: The number of decimal fields between the prefix and the text lines.
-_HEADER_FIELD_COUNT: Final = 5
+_HEADER_FIELD_COUNT: Final = 6
 FIELD_COUNT: Final[int] = _HEADER_FIELD_COUNT + TEXT_LINE_COUNT
 
 _GENERATION_DIGITS: Final = "0123456789ABCDEF"
@@ -253,13 +232,14 @@ _validate_contract()
 
 @dataclass(frozen=True, slots=True)
 class Frame:
-    """One accepted KP3 frame, parsed into the fields the firmware keeps."""
+    """One accepted KP4 frame, parsed into the fields the firmware keeps."""
 
     generation: int
     index: int
     total: int
     icon: str
     led_hint: int
+    row_roles: tuple[int, ...]
     lines: tuple[str, ...]
 
 
@@ -273,12 +253,14 @@ def _field_width(field: int) -> int:
             return ICON_MAX
         case 4:
             return LED_HINT_FIELD_MAX
+        case 5:
+            return TEXT_LINE_COUNT
         case _:
             return LINE_MAX
 
 
 def parse(frame: str | bytes) -> Frame:
-    """Parse a KP3 frame, raising FrameError wherever the firmware would
+    """Parse a KP4 frame, raising FrameError wherever the firmware would
     answer the GATT write with BT_ATT_ERR_VALUE_NOT_ALLOWED.
 
     Mirrors keypoint_live_data_parse()'s single pass over the payload: field
@@ -307,6 +289,8 @@ def parse(frame: str | bytes) -> Frame:
                 raise FrameError("IDX and TOTAL must not be empty")
             if field == 4 and column != LED_HINT_FIELD_MAX:
                 raise FrameError("LED hint must be exactly one digit")
+            if field == 5 and column != TEXT_LINE_COUNT:
+                raise FrameError(f"ROLES must contain exactly {TEXT_LINE_COUNT} codes")
             fields.append(bytearray())
             continue
 
@@ -318,6 +302,8 @@ def parse(frame: str | bytes) -> Frame:
             raise FrameError("IDX and TOTAL accept decimal digits only")
         if field >= 3 and not 0x20 <= byte <= 0x7E:
             raise FrameError(f"non-printable byte {byte:#04x} in field {field}")
+        if field == 5 and chr(byte) not in tuple(str(code) for code in ROW_ROLE_CODES):
+            raise FrameError(f"unknown row role {chr(byte)!r}")
         fields[field].append(byte)
 
     if len(fields) != FIELD_COUNT:
@@ -344,6 +330,7 @@ def parse(frame: str | bytes) -> Frame:
         total=total,
         icon=icon,
         led_hint=LED_HINTS[led_field],
+        row_roles=tuple(int(chr(code)) for code in fields[5]),
         lines=tuple(bytes(line).decode("ascii") for line in fields[_HEADER_FIELD_COUNT:]),
     )
 
@@ -409,8 +396,9 @@ def build_frame(
     index: int = 0,
     total: int = 1,
     led_hint: int = 0,
+    row_roles: tuple[int, ...] | None = None,
 ) -> str:
-    """Build one KP3 frame; missing lines are sent empty.
+    """Build one KP4 frame; missing lines are sent empty.
 
     The result is round-tripped through `parse()`, so a builder can never emit
     something the firmware would reject.
@@ -431,8 +419,19 @@ def build_frame(
     if not 0 <= generation <= _GENERATION_MAX:
         raise FrameError(f"generation {generation} outside 0..{_GENERATION_MAX}")
 
+    if row_roles is None:
+        row_roles = (ROW_ROLE_NAMES.index("NEUTRAL"),) * TEXT_LINE_COUNT
+    if (
+        not isinstance(row_roles, (tuple, list))
+        or len(row_roles) != TEXT_LINE_COUNT
+        or any(isinstance(role, bool) or not isinstance(role, int) or role not in ROW_ROLE_CODES for role in row_roles)
+    ):
+        raise FrameError(f"row_roles must contain exactly {TEXT_LINE_COUNT} valid integer role codes")
     padded = lines + ("",) * (TEXT_LINE_COUNT - len(lines))
-    frame = f"{PREFIX}{generation:0{GENERATION_FIELD_MAX}X}|{index}|{total}|{icon}|{led_hint}|" + "|".join(padded)
+    roles = "".join(str(role) for role in row_roles)
+    frame = f"{PREFIX}{generation:0{GENERATION_FIELD_MAX}X}|{index}|{total}|{icon}|{led_hint}|{roles}|" + "|".join(
+        padded
+    )
     parse(frame)
     return frame
 
@@ -447,6 +446,7 @@ def usage_card(
     *,
     scoped_limit: tuple[str, int] | None = None,
     led_hint: int,
+    row_roles: tuple[int, ...] | None = None,
     generation: int = 0,
     index: int = 0,
     total: int = 1,
@@ -471,6 +471,7 @@ def usage_card(
         index=index,
         total=total,
         led_hint=led_hint,
+        row_roles=row_roles,
     )
 
 

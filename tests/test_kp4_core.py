@@ -1,11 +1,11 @@
-"""Executable tests for the real firmware KP3 core, compiled and driven here.
+"""Executable tests for the real firmware KP4 core, compiled and driven here.
 
 `live_data_core.c` is Zephyr-free by construction, so the host cc can build it
 and ctypes can drive it. These are the first tests that run the deck machine
 rather than reading its source: staging, commit-when-complete, generation
 replacement, page wrap, staleness.
 
-The differential test is the point of the file. kp3 and the C core are two
+The differential test is the point of the file. kp4 and the C core are two
 implementations of one grammar, and a hand-maintained twin drifts. Running
 both over one corpus and demanding identical verdicts *and* identical parsed
 fields is what keeps them honest.
@@ -20,20 +20,20 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import kp3
+import kp4
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WIDGETS = ROOT / "config/boards/shields/lpm_view/widgets"
-SHIM = Path(__file__).resolve().parent / "kp3_core_shim.c"
+SHIM = Path(__file__).resolve().parent / "kp4_core_shim.c"
 CORE = WIDGETS / "live_data_core.c"
 
 
 def _attention_levels() -> tuple[str, ...]:
     """Attention levels, in enum order, read from the firmware header.
 
-    Deliberately not in kp3: attention is the firmware's LED semantic, not
-    part of the KP3 wire grammar, so it has no business in the wire contract.
+    Deliberately not in kp4: attention is the firmware's LED semantic, not
+    part of the KP4 wire grammar, so it has no business in the wire contract.
     """
     header = (WIDGETS / "live_data.h").read_text()
     block = re.search(r"enum keypoint_live_data_attention\s*\{(.*?)\};", header, re.S)
@@ -51,9 +51,9 @@ def core(tmp_path_factory: pytest.TempPathFactory) -> ctypes.CDLL:
     """Compile the pure core + ctypes shim with the host cc."""
     compiler = shutil.which("cc") or shutil.which("gcc")
     if compiler is None:
-        raise RuntimeError("no host C compiler found; the KP3 core tests need cc or gcc")
+        raise RuntimeError("no host C compiler found; the KP4 core tests need cc or gcc")
 
-    library = tmp_path_factory.mktemp("kp3core") / "libkp3core.so"
+    library = tmp_path_factory.mktemp("kp4core") / "libkp4core.so"
     subprocess.run(
         [
             compiler,
@@ -75,9 +75,9 @@ def core(tmp_path_factory: pytest.TempPathFactory) -> ctypes.CDLL:
     )
 
     lib = ctypes.CDLL(str(library))
-    lib.kp3_shim_deck_size.restype = ctypes.c_size_t
-    lib.kp3_shim_line_count.restype = ctypes.c_size_t
-    lib.kp3_shim_line_stride.restype = ctypes.c_size_t
+    lib.kp4_shim_deck_size.restype = ctypes.c_size_t
+    lib.kp4_shim_line_count.restype = ctypes.c_size_t
+    lib.kp4_shim_line_stride.restype = ctypes.c_size_t
     return lib
 
 
@@ -86,10 +86,10 @@ class Deck:
 
     def __init__(self, lib: ctypes.CDLL) -> None:
         self._lib = lib
-        self._line_count = lib.kp3_shim_line_count()
-        self._stride = lib.kp3_shim_line_stride()
-        self._buffer = ctypes.create_string_buffer(lib.kp3_shim_deck_size())
-        lib.kp3_shim_deck_reset(self._buffer)
+        self._line_count = lib.kp4_shim_line_count()
+        self._stride = lib.kp4_shim_line_stride()
+        self._buffer = ctypes.create_string_buffer(lib.kp4_shim_deck_size())
+        lib.kp4_shim_deck_reset(self._buffer)
 
     def _lines(self, raw: ctypes.Array) -> tuple[str, ...]:
         return tuple(
@@ -101,7 +101,7 @@ class Deck:
         """Feed one frame in as the GATT handler would. -> (parse code, committed)."""
         committed = ctypes.c_int()
         data = frame.encode("latin-1")
-        ret = self._lib.kp3_shim_write(
+        ret = self._lib.kp4_shim_write(
             self._buffer,
             data,
             ctypes.c_uint16(len(data)),
@@ -118,10 +118,13 @@ class Deck:
     def snapshot(self, now_ms: int = 0) -> dict[str, object]:
         out = [ctypes.c_int() for _ in range(8)]
         raw = ctypes.create_string_buffer(self._line_count * self._stride)
-        self._lib.kp3_shim_snapshot(self._buffer, ctypes.c_int64(now_ms), *(ctypes.byref(value) for value in out), raw)
+        roles = (ctypes.c_uint8 * self._line_count)()
+        self._lib.kp4_shim_snapshot(
+            self._buffer, ctypes.c_int64(now_ms), *(ctypes.byref(value) for value in out), roles, raw
+        )
         icon, led_hint, attention, has_data, stale, generation, view_index, total_pages = (value.value for value in out)
         return {
-            "icon": kp3.ICON_NAMES[icon],
+            "icon": kp4.ICON_NAMES[icon],
             "led_hint": led_hint,
             "attention": ATTENTION_LEVELS[attention],
             "has_data": bool(has_data),
@@ -130,25 +133,30 @@ class Deck:
             "view_index": view_index,
             "total_pages": total_pages,
             "lines": self._lines(raw),
+            "row_roles": tuple(roles),
         }
 
     def page_advance(self, delta: int) -> bool:
-        return bool(self._lib.kp3_shim_page_advance(self._buffer, ctypes.c_int(delta)))
+        return bool(self._lib.kp4_shim_page_advance(self._buffer, ctypes.c_int(delta)))
 
-    def parse(self, frame: str) -> tuple[int, kp3.Frame | None]:
+    def parse(self, frame: str) -> tuple[int, kp4.Frame | None]:
         out = [ctypes.c_int() for _ in range(5)]
         raw = ctypes.create_string_buffer(self._line_count * self._stride)
         data = frame.encode("latin-1")
-        ret = self._lib.kp3_shim_parse(data, ctypes.c_uint16(len(data)), *(ctypes.byref(value) for value in out), raw)
+        roles = (ctypes.c_uint8 * self._line_count)()
+        ret = self._lib.kp4_shim_parse(
+            data, ctypes.c_uint16(len(data)), *(ctypes.byref(value) for value in out), roles, raw
+        )
         if ret < 0:
             return ret, None
         generation, index, total, icon, led_hint = (value.value for value in out)
-        return ret, kp3.Frame(
+        return ret, kp4.Frame(
             generation=generation,
             index=index,
             total=total,
-            icon=kp3.ICON_NAMES[icon],
+            icon=kp4.ICON_NAMES[icon],
             led_hint=led_hint,
+            row_roles=tuple(roles),
             lines=self._lines(raw),
         )
 
@@ -159,60 +167,60 @@ def deck(core: ctypes.CDLL) -> Deck:
 
 
 def card(index: int, total: int, *, generation: int, text: str = "X", icon: str = "SUN") -> str:
-    return kp3.build_frame(icon, kp3.title(text), generation=generation, index=index, total=total)
+    return kp4.build_frame(icon, kp4.title(text), generation=generation, index=index, total=total)
 
 
 # ---------------------------------------------------------------------------
-# Differential corpus: kp3 and the compiled core must agree, verdict and fields
+# Differential corpus: kp4 and the compiled core must agree, verdict and fields
 # ---------------------------------------------------------------------------
 
 
 def _corpus() -> list[str]:
-    line = "Z" * kp3.LINE_MAX
-    lines = [line] * kp3.TEXT_LINE_COUNT
+    line = "Z" * kp4.LINE_MAX
+    lines = [line] * kp4.TEXT_LINE_COUNT
     joined = "|".join(lines)
 
     frames = [
         # Accepted
-        kp3.build_frame("NONE"),
-        kp3.build_frame("SUN", "A", "B", "C", "D", "E", "F", generation=0x00),
-        kp3.build_frame("CLAUDE", *lines, generation=0xFF, index=7, total=8, led_hint=4),
-        kp3.claude_card("1h23m", 22, "4d", 41, led_hint=0, generation=0xA0),
-        kp3.claude_card("1h30m", 76, "4d", 88, scoped_limit=("FB", 68), led_hint=2, generation=0xA0),
-        kp3.codex_card("NOW", 96, "18h", 89, led_hint=3, generation=0x0F, index=1, total=2),
-        *(kp3.build_frame(icon) for icon in kp3.ICON_NAMES),
-        *(kp3.build_frame("SUN", led_hint=code) for code in kp3.LED_CODES),
+        kp4.build_frame("NONE"),
+        kp4.build_frame("SUN", "A", "B", "C", "D", "E", "F", generation=0x00),
+        kp4.build_frame("CLAUDE", *lines, generation=0xFF, index=7, total=8, led_hint=4),
+        kp4.claude_card("1h23m", 22, "4d", 41, led_hint=0, generation=0xA0),
+        kp4.claude_card("1h30m", 76, "4d", 88, scoped_limit=("FB", 68), led_hint=2, generation=0xA0),
+        kp4.codex_card("NOW", 96, "18h", 89, led_hint=3, generation=0x0F, index=1, total=2),
+        *(kp4.build_frame(icon) for icon in kp4.ICON_NAMES),
+        *(kp4.build_frame("SUN", led_hint=code) for code in kp4.LED_CODES),
         # Rejected
         "",
-        "KP3",
+        "KP4",
         "KP2|A0|0|1|SUN|0|" + joined,
-        f"KP3|a0|0|1|SUN|0|{joined}",
-        f"KP3|A|0|1|SUN|0|{joined}",
-        f"KP3|A0F|0|1|SUN|0|{joined}",
-        f"KP3|GG|0|1|SUN|0|{joined}",
-        f"KP3||0|1|SUN|0|{joined}",
-        f"KP3|A0||1|SUN|0|{joined}",
-        f"KP3|A0|0||SUN|0|{joined}",
-        f"KP3|A0|0|0|SUN|0|{joined}",
-        f"KP3|A0|0|9|SUN|0|{joined}",
-        f"KP3|A0|1|1|SUN|0|{joined}",
-        f"KP3|A0|3|2|SUN|0|{joined}",
-        f"KP3|A0|x|1|SUN|0|{joined}",
-        f"KP3|A0|0|1|MOON|0|{joined}",
-        f"KP3|A0|0|1||0|{joined}",
-        f"KP3|A0|0|1|sun|0|{joined}",
-        f"KP3|A0|0|1|SUN|5|{joined}",
-        f"KP3|A0|0|1|SUN||{joined}",
-        f"KP3|A0|0|1|SUN|01|{joined}",
-        f"KP3|A0|0|1|SUN|0|{joined}|X",
-        f"KP3|A0|0|1|SUN|0|{joined}|",
-        "KP3|A0|0|1|SUN|0|" + "|".join(lines[:-1]),
-        "KP3|A0|0|1|SUN|0|" + "|".join(["Z" * (kp3.LINE_MAX + 1), *lines[1:]]),
-        "KP3|A0|0|1|" + "S" * (kp3.ICON_MAX + 1) + f"|0|{joined}",
-        "KP3|A0|0|1|SUN|0|" + "|".join(["\x01", *lines[1:]]),
-        "KP3|A0|0|1|SUN|0|" + "|".join(["\x7f", *lines[1:]]),
-        "KP3|A0|0|1|SUN|0|" + "|".join(["A|B", *lines[1:]]),
-        "KP3|A0|0|1|" + "S" * kp3.ICON_MAX + f"|0|{joined}" + "!",  # over FRAME_MAX
+        f"KP4|a0|0|1|SUN|0|000000|{joined}",
+        f"KP4|A|0|1|SUN|0|000000|{joined}",
+        f"KP4|A0F|0|1|SUN|0|000000|{joined}",
+        f"KP4|GG|0|1|SUN|0|000000|{joined}",
+        f"KP4||0|1|SUN|0|000000|{joined}",
+        f"KP4|A0||1|SUN|0|000000|{joined}",
+        f"KP4|A0|0||SUN|0|000000|{joined}",
+        f"KP4|A0|0|0|SUN|0|000000|{joined}",
+        f"KP4|A0|0|9|SUN|0|000000|{joined}",
+        f"KP4|A0|1|1|SUN|0|000000|{joined}",
+        f"KP4|A0|3|2|SUN|0|000000|{joined}",
+        f"KP4|A0|x|1|SUN|0|000000|{joined}",
+        f"KP4|A0|0|1|MOON|0|000000|{joined}",
+        f"KP4|A0|0|1||0|000000|{joined}",
+        f"KP4|A0|0|1|sun|0|000000|{joined}",
+        f"KP4|A0|0|1|SUN|5|000000|{joined}",
+        f"KP4|A0|0|1|SUN||000000|{joined}",
+        f"KP4|A0|0|1|SUN|01|000000|{joined}",
+        f"KP4|A0|0|1|SUN|0|000000|{joined}|X",
+        f"KP4|A0|0|1|SUN|0|000000|{joined}|",
+        "KP4|A0|0|1|SUN|0|000000|" + "|".join(lines[:-1]),
+        "KP4|A0|0|1|SUN|0|000000|" + "|".join(["Z" * (kp4.LINE_MAX + 1), *lines[1:]]),
+        "KP4|A0|0|1|" + "S" * (kp4.ICON_MAX + 1) + f"|0|{joined}",
+        "KP4|A0|0|1|SUN|0|000000|" + "|".join(["\x01", *lines[1:]]),
+        "KP4|A0|0|1|SUN|0|000000|" + "|".join(["\x7f", *lines[1:]]),
+        "KP4|A0|0|1|SUN|0|000000|" + "|".join(["A|B", *lines[1:]]),
+        "KP4|A0|0|1|" + "S" * kp4.ICON_MAX + f"|0|{joined}" + "!",  # over FRAME_MAX
     ]
     return frames
 
@@ -225,12 +233,12 @@ def test_python_and_c_parsers_agree(deck: Deck, frame: str) -> None:
     ret, c_frame = deck.parse(frame)
 
     try:
-        expected = kp3.parse(frame)
-    except kp3.FrameError:
-        assert ret < 0, f"C core accepted a frame kp3 rejects: {frame!r}"
+        expected = kp4.parse(frame)
+    except kp4.FrameError:
+        assert ret < 0, f"C core accepted a frame kp4 rejects: {frame!r}"
         return
 
-    assert ret == 0, f"C core rejected a frame kp3 accepts: {frame!r}"
+    assert ret == 0, f"C core rejected a frame kp4 accepts: {frame!r}"
     assert c_frame == expected
 
 
@@ -251,12 +259,12 @@ def _random_frame(rng: random.Random) -> str:
     match rng.randrange(3):
         case 0:
             fields = [rng.choice(_FUZZ_FIELDS) for _ in range(rng.randrange(8, 14))]
-            prefix = kp3.PREFIX if rng.random() < 0.9 else "KP2|"
+            prefix = kp4.PREFIX if rng.random() < 0.9 else "KP2|"
             return prefix + "|".join(fields)
         case 1:
-            fields = ["A0", "0", "1", "SUN", "0", *(f"L{i}" for i in range(kp3.TEXT_LINE_COUNT))]
+            fields = ["A0", "0", "1", "SUN", "0", "012340", *(f"L{i}" for i in range(kp4.TEXT_LINE_COUNT))]
             fields[rng.randrange(len(fields))] = rng.choice(_FUZZ_FIELDS)
-            return kp3.PREFIX + "|".join(fields)
+            return kp4.PREFIX + "|".join(fields)
         case _:
             return "".join(rng.choice(_FUZZ_BYTES) for _ in range(rng.randrange(0, 90)))
 
@@ -272,18 +280,18 @@ def test_the_parsers_agree_on_random_frames(deck: Deck) -> None:
         frame = _random_frame(rng)
         ret, c_frame = deck.parse(frame)
         try:
-            expected = kp3.parse(frame)
-        except kp3.FrameError:
-            assert ret < 0, f"C core accepted a frame kp3 rejects: {frame!r}"
+            expected = kp4.parse(frame)
+        except kp4.FrameError:
+            assert ret < 0, f"C core accepted a frame kp4 rejects: {frame!r}"
             continue
-        assert ret == 0, f"C core rejected a frame kp3 accepts: {frame!r}"
+        assert ret == 0, f"C core rejected a frame kp4 accepts: {frame!r}"
         assert c_frame == expected, f"parsed fields differ for {frame!r}"
 
 
 def _accepts(frame: str) -> bool:
     try:
-        kp3.parse(frame)
-    except kp3.FrameError:
+        kp4.parse(frame)
+    except kp4.FrameError:
         return False
     return True
 
@@ -299,7 +307,7 @@ def test_a_single_page_deck_commits_on_arrival(deck: Deck) -> None:
     assert snapshot["has_data"] is True
     assert snapshot["total_pages"] == 1
     assert snapshot["generation"] == 0xA0
-    assert snapshot["lines"][0] == kp3.title("ONE")
+    assert snapshot["lines"][0] == kp4.title("ONE")
 
 
 def test_a_deck_commits_only_when_every_page_has_arrived(deck: Deck) -> None:
@@ -311,7 +319,7 @@ def test_a_deck_commits_only_when_every_page_has_arrived(deck: Deck) -> None:
     snapshot = deck.snapshot()
     assert snapshot["has_data"] is True
     assert snapshot["total_pages"] == 3
-    assert snapshot["lines"][0] == kp3.title("P0")
+    assert snapshot["lines"][0] == kp4.title("P0")
 
 
 def test_pages_may_arrive_out_of_order(deck: Deck) -> None:
@@ -326,7 +334,7 @@ def test_a_repeated_page_does_not_complete_a_deck(deck: Deck) -> None:
     assert deck.snapshot()["has_data"] is False
 
     assert deck.accept(card(1, 2, generation=0xD0))
-    assert deck.snapshot()["lines"][0] == kp3.title("B"), "the later page-0 write wins"
+    assert deck.snapshot()["lines"][0] == kp4.title("B"), "the later page-0 write wins"
 
 
 def test_a_new_generation_restarts_staging(deck: Deck) -> None:
@@ -347,7 +355,7 @@ def test_a_new_generation_replaces_the_committed_deck(deck: Deck) -> None:
     assert deck.accept(card(0, 1, generation=0x11, text="NEW"))
     snapshot = deck.snapshot()
     assert snapshot["generation"] == 0x11
-    assert snapshot["lines"][0] == kp3.title("NEW")
+    assert snapshot["lines"][0] == kp4.title("NEW")
 
 
 def test_a_shrinking_deck_pulls_the_view_index_back_into_range(deck: Deck) -> None:
@@ -380,7 +388,7 @@ def test_paging_shows_the_page_it_lands_on(deck: Deck) -> None:
     for index in range(2):
         deck.accept(card(index, 2, generation=0x31, text=f"P{index}"))
     deck.page_advance(+1)
-    assert deck.snapshot()["lines"][0] == kp3.title("P1")
+    assert deck.snapshot()["lines"][0] == kp4.title("P1")
 
 
 def test_paging_a_single_page_deck_changes_nothing(deck: Deck) -> None:
@@ -402,16 +410,16 @@ def test_data_goes_stale_exactly_at_the_derived_threshold(deck: Deck) -> None:
     deck.accept(card(0, 1, generation=0x40), now_ms=1_000)
 
     assert deck.snapshot(now_ms=1_000)["stale"] is False
-    assert deck.snapshot(now_ms=1_000 + kp3.STALE_MS - 1)["stale"] is False
-    assert deck.snapshot(now_ms=1_000 + kp3.STALE_MS)["stale"] is True
+    assert deck.snapshot(now_ms=1_000 + kp4.STALE_MS - 1)["stale"] is False
+    assert deck.snapshot(now_ms=1_000 + kp4.STALE_MS)["stale"] is True
 
 
 def test_a_fresh_frame_clears_staleness(deck: Deck) -> None:
     deck.accept(card(0, 1, generation=0x41), now_ms=0)
-    assert deck.snapshot(now_ms=kp3.STALE_MS)["stale"] is True
+    assert deck.snapshot(now_ms=kp4.STALE_MS)["stale"] is True
 
-    deck.accept(card(0, 1, generation=0x42), now_ms=kp3.STALE_MS)
-    assert deck.snapshot(now_ms=kp3.STALE_MS)["stale"] is False
+    deck.accept(card(0, 1, generation=0x42), now_ms=kp4.STALE_MS)
+    assert deck.snapshot(now_ms=kp4.STALE_MS)["stale"] is False
 
 
 def test_an_empty_deck_reports_the_no_data_card(deck: Deck) -> None:
@@ -428,11 +436,11 @@ def test_stale_data_keeps_its_text(deck: Deck) -> None:
     """1-bit rendering cannot dim, so stale cards stay readable and the health
     strip carries the signal. Losing the text would be a silent regression."""
     deck.accept(card(0, 1, generation=0x51, text="KEEP"), now_ms=0)
-    stale = deck.snapshot(now_ms=kp3.STALE_MS)
+    stale = deck.snapshot(now_ms=kp4.STALE_MS)
 
     assert stale["stale"] is True
     assert stale["has_data"] is True
-    assert stale["lines"][0] == kp3.title("KEEP")
+    assert stale["lines"][0] == kp4.title("KEEP")
 
 
 # ---------------------------------------------------------------------------
@@ -442,8 +450,8 @@ def test_stale_data_keeps_its_text(deck: Deck) -> None:
 
 
 def attention_for(deck: Deck, *, icon: str, led_hint: int, stale: bool = False) -> str:
-    deck.accept(kp3.build_frame(icon, kp3.title("X"), generation=0x60, led_hint=led_hint), now_ms=0)
-    return str(deck.snapshot(now_ms=kp3.STALE_MS if stale else 0)["attention"])
+    deck.accept(kp4.build_frame(icon, kp4.title("X"), generation=0x60, led_hint=led_hint), now_ms=0)
+    return str(deck.snapshot(now_ms=kp4.STALE_MS if stale else 0)["attention"])
 
 
 @pytest.mark.parametrize(
@@ -482,7 +490,7 @@ def test_every_attention_level_is_distinct(deck: Deck) -> None:
     reached = {
         deck.snapshot()["attention"],
         attention_for(deck, icon="CLAUDE", led_hint=0, stale=True),
-        *(attention_for(deck, icon="SUN", led_hint=code) for code in kp3.LED_CODES if code),
+        *(attention_for(deck, icon="SUN", led_hint=code) for code in kp4.LED_CODES if code),
         *(attention_for(deck, icon=icon, led_hint=0) for icon in ("CLAUDE", "CODEX", "WARN", "SUN")),
     }
     assert reached == set(ATTENTION_LEVELS), f"unreachable levels: {set(ATTENTION_LEVELS) - reached}"
@@ -491,7 +499,7 @@ def test_every_attention_level_is_distinct(deck: Deck) -> None:
 def test_a_rejected_frame_leaves_the_deck_untouched(deck: Deck) -> None:
     deck.accept(card(0, 1, generation=0x50, text="KEEP"))
 
-    ret, committed = deck.write("KP3|A0|0|9|SUN|0|X|||||")
+    ret, committed = deck.write("KP4|A0|0|9|SUN|0|000000|X|||||")
     assert ret < 0 and not committed
 
-    assert deck.snapshot()["lines"][0] == kp3.title("KEEP")
+    assert deck.snapshot()["lines"][0] == kp4.title("KEEP")

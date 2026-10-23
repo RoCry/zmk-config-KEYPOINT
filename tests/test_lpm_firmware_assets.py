@@ -45,10 +45,10 @@ def test_al_pacino_asset_is_wired_into_peripheral_firmware() -> None:
 
     source = asset.read_text()
     assert "const lv_img_dsc_t al_pacino" in source
-    assert ".header.cf = LV_IMG_CF_INDEXED_1BIT" in source
+    assert ".header.cf = LV_IMG_CF_INDEXED_4BIT" in source
     assert ".header.w = 120" in source
     assert ".header.h = 72" in source
-    assert ".data_size = 1088" in source
+    assert ".data_size = 4384" in source
 
 
 if __name__ == "__main__":

@@ -8,21 +8,21 @@
 #pragma once
 
 #include <lvgl.h>
-#include <zmk/endpoints.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #define CANVAS_SIZE 72
+#define KEYPOINT_MIDDLE_X 68
 #define KEYPOINT_STATUS_PROFILE_COUNT 4
 
-#define LVGL_BACKGROUND                                                                            \
-    IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? lv_color_black() : lv_color_white()
-#define LVGL_FOREGROUND                                                                            \
-    IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_INVERTED) ? lv_color_white() : lv_color_black()
+#define LVGL_BACKGROUND lv_color_white()
+#define LVGL_FOREGROUND lv_color_black()
 
 struct status_state {
     uint8_t battery;
     bool charging;
-#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
-    struct zmk_endpoint_instance selected_endpoint;
+#if CONFIG_KEYPOINT_LIVE_DATA
+    bool usb;
     int active_profile_index;
     bool active_profile_connected;
     bool active_profile_bonded;
@@ -37,7 +37,7 @@ struct status_state {
 
 struct battery_status_state {
     uint8_t level;
-#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
+#if CONFIG_USB_DEVICE_STACK
     bool usb_present;
 #endif
 };

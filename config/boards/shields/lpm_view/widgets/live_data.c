@@ -119,10 +119,11 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
 
     enum keypoint_live_data_icon icon;
     enum keypoint_live_data_led_hint led_hint;
+    enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT];
     uint8_t generation, idx, total;
     char parsed[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
     int ret = keypoint_live_data_parse((const uint8_t *)buf, len, &generation, &idx, &total,
-                                       &icon, &led_hint, parsed);
+                                       &icon, &led_hint, row_roles, parsed);
     if (ret < 0) {
         LOG_WRN("Rejected live-data payload len=%u", len);
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
@@ -132,7 +133,7 @@ static ssize_t write_live_data(struct bt_conn *conn, const struct bt_gatt_attr *
     const uint8_t previous_generation = live_deck.generation;
     const bool had_deck = live_deck.total > 0;
     const bool committed = keypoint_live_data_core_store(&live_deck, generation, idx, total, icon,
-                                                         led_hint, parsed, k_uptime_get());
+                                                         led_hint, row_roles, parsed, k_uptime_get());
     if (committed && (!had_deck || live_deck.generation != previous_generation)) {
         deck_epoch++;
     }

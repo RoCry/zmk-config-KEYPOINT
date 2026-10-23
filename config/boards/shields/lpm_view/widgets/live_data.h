@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define KEYPOINT_LIVE_DATA_PREFIX "KP3|"
+#define KEYPOINT_LIVE_DATA_PREFIX "KP4|"
 #define KEYPOINT_LIVE_DATA_ICON_MAX 8
 #define KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT 6
 #define KEYPOINT_LIVE_DATA_LINE_MAX 9
@@ -22,6 +22,7 @@
      (KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX + 1) +                                               \
      ((KEYPOINT_LIVE_DATA_PAGE_FIELD_MAX + 1) * 2) +                                               \
      (KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX + 1) +                                                 \
+     (KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT + 1) +                                                   \
      KEYPOINT_LIVE_DATA_ICON_MAX +                                                                 \
      (KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * KEYPOINT_LIVE_DATA_LINE_MAX) +                          \
      KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT)
@@ -45,6 +46,15 @@ enum keypoint_live_data_led_hint {
     KEYPOINT_LIVE_DATA_LED_HINT_ATTENTION,
     KEYPOINT_LIVE_DATA_LED_HINT_WARNING,
     KEYPOINT_LIVE_DATA_LED_HINT_ERROR,
+};
+
+/* Producer-owned meaning per text/bar row; physical colours belong to the UI. */
+enum keypoint_live_data_row_role {
+    KEYPOINT_LIVE_DATA_ROW_ROLE_NEUTRAL,
+    KEYPOINT_LIVE_DATA_ROW_ROLE_POSITIVE,
+    KEYPOINT_LIVE_DATA_ROW_ROLE_ATTENTION,
+    KEYPOINT_LIVE_DATA_ROW_ROLE_WARNING,
+    KEYPOINT_LIVE_DATA_ROW_ROLE_ERROR,
 };
 
 /* The one LED semantic LiveData exposes: the producer's LED hint, staleness and
@@ -71,6 +81,7 @@ struct keypoint_live_data_snapshot {
     enum keypoint_live_data_icon icon;
     enum keypoint_live_data_led_hint led_hint;
     enum keypoint_live_data_attention attention;
+    enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT];
     char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIVE_DATA_LINE_MAX + 1];
     bool has_data;
     bool stale;
@@ -92,6 +103,7 @@ typedef void (*keypoint_live_data_listener_t)(enum keypoint_live_data_change cha
 int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generation,
                              uint8_t *idx, uint8_t *total, enum keypoint_live_data_icon *icon,
                              enum keypoint_live_data_led_hint *led_hint,
+                             enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT],
                              char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]);
 struct keypoint_live_data_snapshot keypoint_live_data_snapshot_get(void);

@@ -3,9 +3,9 @@
 # requires-python = ">=3.13"
 # dependencies = ["bleak>=0.22.0", "typer>=0.12.0"]
 # ///
-"""Send mock KP3 live-data decks to the KEYPOINT left display over BLE.
+"""Send mock KP4 live-data decks to the KEYPOINT left display over BLE.
 
-This script owns the transport only. `scripts/kp3.py` is the grammar authority
+This script owns the transport only. `scripts/kp4.py` is the grammar authority
 -- it derives every limit, icon and LED code from the firmware C and builds and
 validates the frames -- the README documents the contract for producers, and
 `keypoint_demo_cards.py` holds the mock cards. Nothing about the frame layout
@@ -22,7 +22,7 @@ Transport:
 - A deck is pushed page by page under one generation; the firmware commits it
   only once every page of that generation has arrived, then the keyboard's
   left keys page through the deck locally.
-- Freshness: the display marks data stale `kp3.STALE_MS` after the last
+- Freshness: the display marks data stale `kp4.STALE_MS` after the last
   accepted frame (segmented health strip, text stays readable), so keep the
   loop running to stay fresh.
 
@@ -51,13 +51,13 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-import kp3  # noqa: E402
+import kp4  # noqa: E402
 from keypoint_demo_cards import DEFAULT_DEMO_SOURCES, card_frame, demo_deck  # noqa: E402
 
 SERVICE_UUID = "f5d40000-6d2f-4f4b-9b2a-2f4a8e8c0001"
 CHAR_UUID = "f5d40001-6d2f-4f4b-9b2a-2f4a8e8c0001"
 DEMO_DECK_SIZE = 3  # pages pushed per cycle so page navigation can be exercised
-GENERATION_WRAP = 16**kp3.GENERATION_FIELD_MAX
+GENERATION_WRAP = 16**kp4.GENERATION_FIELD_MAX
 
 app = typer.Typer(help="Send mock live-data frames to the KEYPOINT left display over BLE.")
 

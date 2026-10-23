@@ -20,6 +20,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/ble.h>
 
 #include "status.h"
+#include "theme.h"
 
 // ==================== 图片声明 ====================
 LV_IMG_DECLARE(astronaut);
@@ -63,6 +64,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     draw_battery(canvas, state);
 
     // Draw connection icon
+    label_dsc.color = keypoint_color(state->connected ? KP_GREEN : KP_RED);
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc,
                         state->connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE);
 

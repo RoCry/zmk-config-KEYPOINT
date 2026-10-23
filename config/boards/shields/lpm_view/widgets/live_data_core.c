@@ -81,10 +81,11 @@ static void copy_lines(char dst[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT][KEYPOINT_LIV
 int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generation,
                              uint8_t *idx, uint8_t *total, enum keypoint_live_data_icon *icon,
                              enum keypoint_live_data_led_hint *led_hint,
+                             enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT],
                              char out[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                      [KEYPOINT_LIVE_DATA_LINE_MAX + 1]) {
     if (data == NULL || generation == NULL || idx == NULL || total == NULL || icon == NULL ||
-        led_hint == NULL || out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
+        led_hint == NULL || row_roles == NULL || out == NULL || len > KEYPOINT_LIVE_DATA_FRAME_MAX) {
         return -EINVAL;
     }
 
@@ -99,7 +100,7 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
     memset(out, 0, KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT * (KEYPOINT_LIVE_DATA_LINE_MAX + 1));
 
     /* Field layout after the prefix:
-     * 0=GEN, 1=IDX, 2=TOTAL, 3=ICON, 4=LED, 5..10=lines. */
+     * 0=GEN, 1=IDX, 2=TOTAL, 3=ICON, 4=LED, 5=ROLES, 6..11=lines. */
     uint16_t idx_val = 0, total_val = 0;
     size_t field = 0;
     size_t column = 0;
@@ -108,7 +109,7 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
         const uint8_t ch = data[i];
 
         if (ch == '|') {
-            if (field >= 4 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+            if (field >= 5 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
                 return -EINVAL;
             }
             if (field == 0 && column != KEYPOINT_LIVE_DATA_GENERATION_FIELD_MAX) {
@@ -119,6 +120,9 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
             }
             if (field == 4 && column != KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX) {
                 return -EINVAL; /* LED hint is exactly one digit */
+            }
+            if (field == 5 && column != KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+                return -EINVAL; /* exactly one semantic role per display line */
             }
             field++;
             column = 0;
@@ -145,6 +149,15 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
             continue;
         }
 
+        if (field == 5) {
+            if (column >= KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT || ch < '0' ||
+                ch > '0' + KEYPOINT_LIVE_DATA_ROW_ROLE_ERROR) {
+                return -EINVAL;
+            }
+            row_roles[column++] = (enum keypoint_live_data_row_role)(ch - '0');
+            continue;
+        }
+
         const size_t field_max = (field == 3)   ? KEYPOINT_LIVE_DATA_ICON_MAX
                                  : (field == 4) ? KEYPOINT_LIVE_DATA_LED_HINT_FIELD_MAX
                                                 : KEYPOINT_LIVE_DATA_LINE_MAX;
@@ -156,11 +169,11 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
         } else if (field == 4) {
             led_hint_field[column++] = (char)ch;
         } else {
-            out[field - 5][column++] = (char)ch;
+            out[field - 6][column++] = (char)ch;
         }
     }
 
-    if (field != 4 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
+    if (field != 5 + KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT) {
         return -EINVAL;
     }
     if (total_val < 1 || total_val > KEYPOINT_LIVE_DATA_PAGE_MAX || idx_val >= total_val) {
@@ -180,6 +193,7 @@ int keypoint_live_data_parse(const uint8_t *data, uint16_t len, uint8_t *generat
 bool keypoint_live_data_core_store(struct keypoint_live_data_deck *deck, uint8_t generation,
                                    uint8_t idx, uint8_t total, enum keypoint_live_data_icon icon,
                                    enum keypoint_live_data_led_hint led_hint,
+                                   const enum keypoint_live_data_row_role row_roles[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT],
                                    char lines[KEYPOINT_LIVE_DATA_TEXT_LINE_COUNT]
                                              [KEYPOINT_LIVE_DATA_LINE_MAX + 1],
                                    int64_t now_ms) {
@@ -195,6 +209,7 @@ bool keypoint_live_data_core_store(struct keypoint_live_data_deck *deck, uint8_t
     struct keypoint_live_data_card *card = &deck->pending_cards[idx];
     card->icon = icon;
     card->led_hint = led_hint;
+    memcpy(card->row_roles, row_roles, sizeof(card->row_roles));
     copy_lines(card->lines, lines);
     card->has_data = true;
     card->update_ms = now_ms;
@@ -267,6 +282,7 @@ keypoint_live_data_core_snapshot(const struct keypoint_live_data_deck *deck, int
     if (card != NULL && card->has_data) {
         snapshot.icon = card->icon;
         snapshot.led_hint = card->led_hint;
+        memcpy(snapshot.row_roles, card->row_roles, sizeof(snapshot.row_roles));
         snapshot.has_data = true;
         const int64_t age_ms = now_ms - card->update_ms;
         snapshot.stale = age_ms >= KEYPOINT_LIVE_DATA_STALE_MS;

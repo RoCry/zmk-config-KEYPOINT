@@ -8,13 +8,10 @@
     status = "okay";
     lpm_view: lcd@0 {
         compatible = "jdi,lpm009m360a";
-        spi-max-frequency = <4000000>;
+        spi-max-frequency = <1000000>;
         reg = <0>;
-				width = <144>;
-				height = <72>;
-				color_mode = [02];
-				reverse = <1>; 
-				rotation = <1>;
+        width = <144>;
+        height = <72>;
     };
 };
 

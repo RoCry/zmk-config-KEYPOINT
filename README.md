@@ -5,7 +5,8 @@ ZMK config for the ZitaoTech KEYPOINT split keyboard.
 ## Current Features
 
 - Left display LiveData service: encrypted BLE write characteristic for compact status cards.
-- KP3 deck protocol: whole-deck generation id, page index/total, icon, LED hint, six 9-char text lines.
+- Eight-color LPM009M360A displays: RGB565 rendering, RGB111 panel output; firmware owns palette and styles.
+- KP4 deck protocol: generation, page index/total, icon, LED hint, six row roles and six 9-char text lines.
 - Trackpad LED status patterns: touch/backlight preview, USB transport confirmation, LiveData generation confirmation, stale/no-data/error/warning/attention pulses.
 - A320 trackpad: interrupt-driven I2C read path, scroll/cursor modes, touch state exposed to the LED driver.
 - TrackPoint: cursor only on the right half; scrolling is a layer decision made on the central half.
@@ -28,7 +29,21 @@ Any TrackPoint motion also raises the POINTING layer for 700 ms, where the two r
 
 Those layer numbers live in two files that cannot see each other — `config/keypoint.keymap` and `zitaotech_keypoint_left.dts` — and a mismatch fails no build, it just silently kills the gesture. `tests/test_pointing_layers.py` is what holds them together.
 
-## LiveData KP3 Contract
+## Display
+
+Native glass: **72×144** portrait pixels; Zephyr/LVGL logical display: **144×72**. Shared UI keeps the status, live-data, profile and layer layout. Canvas rotation uses an exact in-place 90° permutation, with no duplicated center row/column or temporary rotation buffer.
+
+LVGL renders RGB565; the driver thresholds each channel into the eight RGB111 colors (black, blue, green, cyan, red, magenta, yellow, white), packs 27 bytes per native row and sends compact RGB at **1 MHz**. Changed rows are tracked; failed transactions retain dirty rows for retry. `LV_Z_VDB_SIZE=100` keeps a full-frame draw buffer, avoiding repeated native-row writes from rotated horizontal stripes.
+
+Host previews establish software rendering, not physical color appearance, wiring, COM inversion, cold-start/wake behavior or power consumption. See the [eight-color validation record](docs/research/2026-10-23-eight-color-validation.md) for build evidence and outstanding physical checks.
+
+## Firmware delivery
+
+Push to `main`, then open [Build ZMK firmware in Actions](https://github.com/RoCry/zmk-config-KEYPOINT/actions/workflows/main.yml). Select the successful run for the intended commit and download its firmware artifact. Extract `left.uf2` and `right.uf2`; manually enter each half's UF2 bootloader and copy the matching file to its mounted drive. The `left-reset` and `right-reset` images clear settings and are not the normal upgrade images.
+
+For this KP4 upgrade, update both halves before resuming the producer. Reconnect BLE, verify an acknowledged KP4 deck, then restore scheduled sending using the producer rollout guide below. Physical eight-color acceptance follows the manual upgrade.
+
+## LiveData KP4 Contract
 
 GATT service/characteristic:
 
@@ -39,7 +54,7 @@ GATT service/characteristic:
 Frame:
 
 ```text
-KP3|GEN|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6
+KP4|GEN|IDX|TOTAL|ICON|LED|ROLES|L1|L2|L3|L4|L5|L6
 ```
 
 - `GEN`: exactly two uppercase hex digits. New deck transaction id.
@@ -47,29 +62,40 @@ KP3|GEN|IDX|TOTAL|ICON|LED|L1|L2|L3|L4|L5|L6
 - `TOTAL`: decimal deck size, `1..8`.
 - `ICON`: one of firmware `KEYPOINT_LIVE_DATA_ICON_*` ids, including `CLAUDE` and `CODEX`.
 - `LED`: `0` none, `1` active, `2` attention, `3` warning, `4` error.
+- `ROLES`: exactly six single-digit codes, one per `L1..L6`: `0` neutral, `1` positive, `2` attention, `3` warning, `4` error. Roles express meaning; firmware chooses colors. They do not change LED hints.
 - `L1..L6`: printable ASCII, max 9 chars each, `|` not allowed. A full 9-char line fills the 72px glass edge to edge (monospace 8px glyphs).
-- Max frame size: 81 bytes.
+- Max frame size: 88 bytes. `[NNN]` lines, `000..100`, render as progress bars.
 
-Firmware stages KP3 pages by `(GEN, TOTAL)` and only commits the visible deck after every page in that generation has arrived. Old KP2 frames are rejected.
+Firmware stages KP4 pages by `(GEN, TOTAL)` and only commits the visible deck after every page in that generation has arrived. Rows and roles commit together. KP3 and older frames are rejected.
 
-`config/boards/shields/lpm_view/widgets/live_data.{h,c}` is the contract; `scripts/kp3.py` is the tooling authority that derives it. kp3 parses those C sources at import, so every constant above has exactly one home. Preview, demo sender, diagnose probe and the tests all build and validate frames through kp3 — nothing else may declare a contract value.
+`widgets/live_data.h` and `live_data_core.c` under `config/boards/shields/lpm_view/` own the contract. `scripts/kp4.py` derives constants/enums and provides the tooling parser/builders; `kp4_contract.json` is its frozen producer copy. Preview, demo sender, diagnose probe and tests use this module.
 
-Producer reference lives in `~/w/_hw/rcink/producer/rcink/keypoint.py`; upgrade producer and firmware together.
+Producer reference: `~/w/_hw/rcink/producer/rcink/keypoint.py`; upgrade producer and firmware together. Rollout guide: `~/w/_hw/rcink/producer/docs/keypoint-kp4.md`. Its launchd sender runs directly from the working tree every 60 seconds when loaded. It has been unloaded for this upgrade; leave it unloaded until KP4 firmware is flashed and acknowledged writes pass.
 
 ## Local Checks
 
 ```bash
-uv run pytest
+just test
+just preview
 ```
 
-Preview one frame:
+Requires `uv`, `cmake` and `ninja`. `scripts/build_preview.py` downloads checksum-pinned LVGL 8.3.7 and builds the firmware's shared `status_render.c`, theme, rotation and panel mapping into a native library. `scripts/preview_keypoint_status.py` emits RGB PNGs to `tmp/status-preview/`; it uses the actual LVGL renderer, with no separate Python drawing simulation.
+
+Preview one frame after building the native library:
 
 ```bash
-uv run scripts/preview_keypoint_status.py --frame 'KP3|A0|0|1|CLAUDE|2|CLAUDE  |5H   76%|14:30|7D   88%|RST  90M|OP   18%'
+uv run scripts/preview_keypoint_status.py --frame 'KP4|A0|0|1|CLAUDE|2|002021|CLAUDE   |5H  1h30m|[076]|7D     4d|[088]|FB 68%'
 ```
 
-Build locally with the checked-out ZMK tree:
+## Image conversion
+
+`scripts/preview_lpm_image.py` quantizes source RGB images to the same eight-color palette. Firmware export uses `LV_IMG_CF_INDEXED_4BIT`: eight palette entries plus padding for the 16-entry LVGL table, two pixels per byte. Floyd–Steinberg dithering is enabled by default; `--no-dither` disables it.
+
+Example Al Pacino regeneration from a retained original image:
 
 ```bash
-PATH=/Users/rocry/w/zmk-local/zmk/.venv/bin:$PATH west build -s app -d build/keypoint-left -b zitaotech_keypoint_left -- -DZMK_CONFIG=/Users/rocry/w/zmk-config-KEYPOINT/config -DSHIELD='lpm_view;left_bbtrackpad_keypoint'
+uv run scripts/preview_lpm_image.py --input /path/to/al_pacino.jpg --stem al_pacino --firmware-c-out config/boards/shields/lpm_view/widgets/picture/al_pacino.c --firmware-symbol al_pacino
+uv run scripts/preview_lpm_image.py --c-input config/boards/shields/lpm_view/widgets/picture/al_pacino.c --c-preview-out tmp/al_pacino.png
 ```
+
+Defaults: portrait crop 72×120, `crop_face` framing, focus `(0.5, 0.38)`, counterclockwise rotation to logical 120×72. `--input` also accepts `host:/abs/path`; decoding supports indexed 1/2/4-bit assets. Use `--help` for crop, size, rotation and output options. Existing monochrome assets remain readable; Al Pacino is exported in eight colors.

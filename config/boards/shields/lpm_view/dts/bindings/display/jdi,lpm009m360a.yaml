@@ -1,30 +1,13 @@
 # Copyright (c) 2023 Taisheng WANG <wstrn66@gmail.com>
 # SPDX-License-Identifier: Apache-2.0
 
-description: LPM009M360A display controller
+description: |
+  LPM009M360A eight-color display. Fixed RGB565 input, logical 144x72 landscape
+  coordinates; driver rotates into native 72x144 compact RGB111 rows.
 
 compatible: "jdi,lpm009m360a"
 
 include: [spi-device.yaml, display-controller.yaml]
 
-properties:
-  # extcomin_gpios:
-  #   type: phandle-array
-  #   description: COM Inversion Polarity Input pin.
-  #
-  # disp_gpios:
-  #   type: phandle-array
-  #   required: false
-  #   description: Display ON/OFF Switching signal pin.
-
-  color_mode:
-    type: uint8-array
-    default: [0x02]
-
-  rotation:
-    type: int
-    default: 0
-
-  reverse:
-    type: int
-    default: 0
+# DISP and EXTCOMIN wiring has not been established. These signals are not
+# software-controlled by this driver; do not assign guessed GPIOs here.

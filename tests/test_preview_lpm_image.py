@@ -1,363 +1,195 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.13"
-# dependencies = ["pillow>=11.0"]
+# dependencies = ["pillow>=12.2", "pytest>=8.0"]
 # ///
 
 from __future__ import annotations
 
-import importlib.util
-import re
 import subprocess
-import tempfile
+import sys
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "preview_lpm_image.py"
-BATCH_SCRIPT = ROOT / "scripts" / "preview_all_lpm_c_arrays.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from lpm_c_array_preview import decode_c_array_preview  # noqa: E402
+from lpm_palette import lvgl_palette_bytes, pack_indexed_4bit, quantize_panel  # noqa: E402
+from preview_lpm_image import generate_previews, write_firmware_c_array  # noqa: E402
 
 
-def load_module():
-    spec = importlib.util.spec_from_file_location("preview_lpm_image", SCRIPT)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+def pixels(image: Image.Image) -> list[object]:
+    return [image.getpixel((x, y)) for y in range(image.height) for x in range(image.width)]
 
 
-def bitmap_pixels_from_c_array(c_source: str, symbol: str, width: int, height: int) -> set[tuple[int, int]]:
-    map_text = c_source[c_source.index(f"{symbol}_map[]") :]
-    map_body = map_text[map_text.index("#endif") :]
-    values = [int(value, 16) for value in re.findall(r"0x([0-9a-fA-F]{2})", map_body)]
-    bitmap = values[: ((width + 7) // 8) * height]
-    pixels: set[tuple[int, int]] = set()
-
-    for y in range(height):
-        for byte_index in range((width + 7) // 8):
-            value = bitmap[y * ((width + 7) // 8) + byte_index]
-            for bit in range(8):
-                x = byte_index * 8 + bit
-                if x < width and value & (1 << (7 - bit)):
-                    pixels.add((x, y))
-
-    return pixels
+def fixture_array(tmp_path: Path, *, bits: int, width: int, body: str, size: int) -> Path:
+    path = tmp_path / "fixture.c"
+    path.write_text(
+        f"uint8_t fixture_map[] = {{\n{body}\n}};\n"
+        f"const lv_img_dsc_t fixture = {{.header.cf = LV_IMG_CF_INDEXED_{bits}BIT, "
+        f".header.w = {width}, .header.h = 1, .data_size = {size}}};\n"
+    )
+    return path
 
 
-def test_generate_previews_creates_expected_keyboard_sized_variants() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "portrait.png"
-        output = tmp_path / "out"
-
-        img = Image.new("RGB", (735, 1024), "white")
-        for y in range(img.height):
-            tone = int(255 * y / (img.height - 1))
-            for x in range(img.width):
-                img.putpixel((x, y), (tone, tone // 2, 255 - tone))
-        img.save(source)
-
-        written = preview.generate_previews(source, output, size=(72, 120), stem="sample")
-
-        names = {path.name for path in written}
-        assert {
-            "sample_gray.png",
-            "sample_contrast.png",
-            "sample_4level.png",
-            "sample_4level_dither.png",
-            "sample_1bit_dither.png",
-            "sample_contact_sheet.png",
-            "sample_contact_sheet_x4.png",
-            "sample_frame_crop_face.png",
-            "sample_frame_crop_center.png",
-            "sample_frame_contain.png",
-            "sample_framing_contact_sheet.png",
-            "sample_framing_contact_sheet_x4.png",
-        } <= names
-        assert "sample_frame_rot90_crop.png" not in names
-        assert "sample_frame_rot270_crop.png" not in names
-
-        for path in written:
-            with Image.open(path) as produced:
-                if path.name.endswith("_contact_sheet_x4.png") or path.name.endswith("_framing_contact_sheet_x4.png"):
-                    assert produced.size[0] > 72 * 4
-                    assert produced.size[1] > 120 * 4
-                elif path.name.endswith("_contact_sheet.png") or path.name.endswith("_framing_contact_sheet.png"):
-                    assert produced.size[0] > 72
-                    assert produced.size[1] > 120
-                else:
-                    assert produced.size == (72, 120)
-                    assert produced.mode in {"L", "1"}
+def test_lvgl_bgra_palette_and_odd_width_packing_have_literal_goldens() -> None:
+    # RGB111 order, independently written LVGL BGRA bytes; 16 slots required.
+    assert lvgl_palette_bytes() == bytes.fromhex(
+        "000000ff ff0000ff 00ff00ff ffff00ff "
+        "0000ffff ff00ffff 00ffffff ffffffff "
+        "000000ff 000000ff 000000ff 000000ff "
+        "000000ff 000000ff 000000ff 000000ff"
+    )
+    image = Image.new("P", (3, 2))
+    image.putdata([4, 2, 1, 7, 3, 5])
+    assert pack_indexed_4bit(image) == bytes.fromhex("42 10 73 50")
 
 
-def test_write_firmware_c_array_uses_logical_landscape_lvgl_format() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "portrait.png"
-        output = tmp_path / "sample.c"
-
-        Image.new("RGB", (72, 120), "white").save(source)
-
-        preview.write_firmware_c_array(
-            source,
-            output,
-            symbol="sample",
-            size=(72, 120),
-            logical_size=(120, 72),
-        )
-
-        c_source = output.read_text()
-        assert "LV_ATTRIBUTE_IMG_SAMPLE" in c_source
-        assert (
-            "const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_IMG_SAMPLE uint8_t sample_map[]"
-            in c_source
-        )
-        assert "const lv_img_dsc_t sample" in c_source
-        assert ".header.cf = LV_IMG_CF_INDEXED_1BIT" in c_source
-        assert ".header.w = 120" in c_source
-        assert ".header.h = 72" in c_source
-        assert ".data_size = 1088" in c_source
+def test_quantization_preserves_rgb_primary_colors_and_dithers_midtones() -> None:
+    image = Image.new("RGB", (4, 1))
+    image.putdata([(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)])
+    assert pixels(quantize_panel(image)) == [4, 2, 1, 6]
+    # Hand-calculated FS oracle: gray 128 distributes quantization error into
+    # alternating white and black; there is no grayscale preprocessing.
+    gray = Image.new("RGB", (2, 2), (128, 128, 128))
+    assert pixels(quantize_panel(gray)) == [7, 0, 0, 7]
 
 
-def test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "marker.png"
-        output = tmp_path / "sample.c"
-
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(source)
-
-        preview.write_firmware_c_array(
-            source,
-            output,
-            symbol="sample",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-
-        assert bitmap_pixels_from_c_array(output.read_text(), symbol="sample", width=3, height=2) == {(0, 1)}
+def test_four_bit_decoder_reads_literal_bgra_and_row_padding(tmp_path: Path) -> None:
+    palette = "0x11,0x22,0x33,0x44, 0xaa,0xbb,0xcc,0xdd," + "0,0,0,255," * 14
+    path = fixture_array(tmp_path, bits=4, width=3, body=palette + "0x10,0x10,", size=66)
+    assert pixels(decode_c_array_preview(path)) == [
+        (204, 187, 170, 221),
+        (51, 34, 17, 68),
+        (204, 187, 170, 221),
+    ]
 
 
-def test_write_firmware_c_array_can_invert_packed_bitmap_pixels() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "marker.png"
-        normal_output = tmp_path / "sample.c"
-        inverted_output = tmp_path / "sample_inverted.c"
-
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(source)
-
-        preview.write_firmware_c_array(
-            source,
-            normal_output,
-            symbol="sample",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-        preview.write_firmware_c_array(
-            source,
-            inverted_output,
-            symbol="sample_inverted",
-            size=(2, 3),
-            logical_size=(3, 2),
-            invert_pixels=True,
-        )
-
-        all_pixels = {(x, y) for y in range(2) for x in range(3)}
-        normal_pixels = bitmap_pixels_from_c_array(normal_output.read_text(), symbol="sample", width=3, height=2)
-        inverted_pixels = bitmap_pixels_from_c_array(
-            inverted_output.read_text(),
-            symbol="sample_inverted",
-            width=3,
-            height=2,
-        )
-
-        assert normal_pixels == {(0, 1)}
-        assert inverted_pixels == all_pixels - normal_pixels
+def test_two_bit_decoder_uses_actual_four_entry_palette(tmp_path: Path) -> None:
+    path = fixture_array(
+        tmp_path,
+        bits=2,
+        width=4,
+        body="0,0,0,255, 0,0,255,255, 0,255,0,255, 255,0,0,255, 0x1b,",
+        size=17,
+    )
+    assert pixels(decode_c_array_preview(path)) == [
+        (0, 0, 0, 255),
+        (255, 0, 0, 255),
+        (0, 255, 0, 255),
+        (0, 0, 255, 255),
+    ]
 
 
-def test_write_c_array_preview_inverts_firmware_bitmap_for_human_viewing() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "marker.png"
-        c_output = tmp_path / "sample.c"
-        preview_output = tmp_path / "sample_from_c.png"
-
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(source)
-
-        preview.write_firmware_c_array(
-            source,
-            c_output,
-            symbol="sample",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-
-        preview.write_c_array_preview(c_output, preview_output, scale=1)
-
-        with Image.open(preview_output) as produced:
-            assert produced.size == (3, 2)
-            assert produced.mode == "L"
-            assert produced.getpixel((0, 1)) == 0
-            assert produced.getpixel((0, 0)) == 255
-            assert produced.getpixel((1, 1)) == 255
+def test_legacy_conditional_palette_selects_branch_without_global_inversion(tmp_path: Path) -> None:
+    path = fixture_array(
+        tmp_path,
+        bits=1,
+        width=2,
+        body=(
+            "#if CONFIG_NICE_VIEW_WIDGET_INVERTED\n"
+            "255,255,255,255, 0,0,0,255,\n"
+            "#else\n0,0,0,255, 255,255,255,255,\n#endif\n0x40,"
+        ),
+        size=9,
+    )
+    assert pixels(decode_c_array_preview(path)) == [(0, 0, 0, 255), (255, 255, 255, 255)]
+    assert pixels(decode_c_array_preview(path, widget_inverted=True)) == [(255, 255, 255, 255), (0, 0, 0, 255)]
 
 
-def test_write_c_array_preview_can_show_raw_bitmap_bits() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "marker.png"
-        c_output = tmp_path / "sample.c"
-        preview_output = tmp_path / "sample_from_c_raw.png"
-
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(source)
-
-        preview.write_firmware_c_array(
-            source,
-            c_output,
-            symbol="sample",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-
-        preview.write_c_array_preview(c_output, preview_output, scale=1, invert=False)
-
-        with Image.open(preview_output) as produced:
-            assert produced.size == (3, 2)
-            assert produced.getpixel((0, 1)) == 255
-            assert produced.getpixel((0, 0)) == 0
-            assert produced.getpixel((1, 1)) == 0
+@pytest.mark.parametrize(
+    ("body", "size", "error"),
+    [
+        ("0,0,0,255,255,255,255,255,", 9, "image has 8 bytes"),
+        ("0,0,0,255,255,255,255,255,0,", 10, "data_size is 10"),
+        ("0,0,0,255,255,255,255,255,256,", 9, "outside byte range"),
+        ("#if UNKNOWN\n0,\n#endif", 9, "unsupported image preprocessor"),
+        ("#if CONFIG_NICE_VIEW_WIDGET_INVERTED\n0,", 9, "unterminated #if"),
+    ],
+)
+def test_decoder_fails_clearly_on_malformed_arrays(tmp_path: Path, body: str, size: int, error: str) -> None:
+    path = fixture_array(tmp_path, bits=1, width=2, body=body, size=size)
+    with pytest.raises(ValueError, match=error):
+        decode_c_array_preview(path)
 
 
-def test_c_input_cli_writes_scaled_human_preview() -> None:
-    preview = load_module()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        source = tmp_path / "marker.png"
-        c_output = tmp_path / "sample.c"
-        preview_output = tmp_path / "sample_from_c_x4.png"
-
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(source)
-        preview.write_firmware_c_array(
-            source,
-            c_output,
-            symbol="sample",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-
-        result = subprocess.run(
-            [
-                "uv",
-                "run",
-                str(SCRIPT),
-                "--c-input",
-                str(c_output),
-                "--c-preview-out",
-                str(preview_output),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-        )
-
-        assert str(preview_output) in result.stdout
-        with Image.open(preview_output) as produced:
-            assert produced.size == (12, 8)
-            assert produced.getpixel((0, 4)) == 0
-            assert produced.getpixel((0, 0)) == 255
+def test_export_rotates_rgb_marker_ccw_and_preserves_natural_color(tmp_path: Path) -> None:
+    source = tmp_path / "marker.png"
+    image = Image.new("RGB", (2, 3), "black")
+    image.putpixel((0, 0), (255, 0, 0))
+    image.putpixel((1, 2), (0, 0, 255))
+    image.save(source)
+    output = tmp_path / "marker.c"
+    write_firmware_c_array(source, output, symbol="marker", size=(2, 3), logical_size=(3, 2))
+    assert pixels(decode_c_array_preview(output)) == [
+        (0, 0, 0, 255),
+        (0, 0, 0, 255),
+        (0, 0, 255, 255),
+        (255, 0, 0, 255),
+        (0, 0, 0, 255),
+        (0, 0, 0, 255),
+    ]
+    assert "CONFIG_NICE_VIEW_WIDGET_INVERTED" not in output.read_text()
 
 
-def test_preview_all_lpm_c_arrays_cli_scans_c_arrays_only() -> None:
-    preview = load_module()
+def test_preview_cli_exports_color_comparison_and_decodes_asset(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (72, 120), "red").save(source)
+    written = generate_previews(source, tmp_path / "out", stem="sample")
+    names = {path.name for path in written}
+    assert {"sample_source_rgb.png", "sample_8color.png", "sample_8color_dither.png"} <= names
+    with Image.open(tmp_path / "out" / "sample_contact_sheet.png") as comparison:
+        assert comparison.mode == "RGB"
+        assert comparison.getpixel((10, 10)) == (255, 0, 0)
+    asset = tmp_path / "sample.c"
+    write_firmware_c_array(source, asset, symbol="sample")
+    preview = tmp_path / "decoded.png"
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--offline",
+            str(ROOT / "scripts/preview_lpm_image.py"),
+            "--c-input",
+            str(asset),
+            "--c-preview-out",
+            str(preview),
+            "--c-preview-scale",
+            "1",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with Image.open(preview) as decoded:
+        assert decoded.size == (120, 72)
+        assert decoded.getpixel((0, 0)) == (255, 0, 0, 255)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        input_root = tmp_path / "widgets"
-        output_dir = tmp_path / "previews"
-        input_root.mkdir()
 
-        marker = tmp_path / "marker.png"
-        image = Image.new("RGB", (2, 3), "black")
-        image.putpixel((0, 0), (255, 255, 255))
-        image.save(marker)
-
-        preview.write_firmware_c_array(
-            marker,
-            input_root / "first.c",
-            symbol="first",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-        preview.write_firmware_c_array(
-            marker,
-            input_root / "nested" / "second.c",
-            symbol="second",
-            size=(2, 3),
-            logical_size=(3, 2),
-        )
-        (input_root / "not_image.c").write_text("int main(void) { return 0; }\n")
-
-        result = subprocess.run(
-            [
-                "uv",
-                "run",
-                str(BATCH_SCRIPT),
-                "--input-root",
-                str(input_root),
-                "--output-dir",
-                str(output_dir),
-                "--scale",
-                "2",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            cwd=ROOT,
-        )
-
-        written = sorted(output_dir.glob("*_from_c_x2.png"))
-        assert [path.name for path in written] == ["first_from_c_x2.png", "second_from_c_x2.png"]
-        assert "2 preview(s)" in result.stdout
-        for path in written:
-            with Image.open(path) as produced:
-                assert produced.size == (6, 4)
-                assert produced.getpixel((0, 2)) == 0
-                assert produced.getpixel((0, 0)) == 255
+def test_batch_preview_accepts_all_existing_indexed_formats(tmp_path: Path) -> None:
+    output = tmp_path / "batch"
+    subprocess.run(
+        [
+            "uv",
+            "run",
+            "--offline",
+            str(ROOT / "scripts/preview_all_lpm_c_arrays.py"),
+            "--output-dir",
+            str(output),
+            "--scale",
+            "1",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert {"al_pacino_from_c_x1.png", "david_from_c_x1.png"} <= {path.name for path in output.glob("*.png")}
 
 
 if __name__ == "__main__":
-    test_generate_previews_creates_expected_keyboard_sized_variants()
-    test_write_firmware_c_array_uses_logical_landscape_lvgl_format()
-    test_write_firmware_c_array_default_rotation_matches_existing_lpm_assets()
-    test_write_firmware_c_array_can_invert_packed_bitmap_pixels()
-    test_write_c_array_preview_inverts_firmware_bitmap_for_human_viewing()
-    test_write_c_array_preview_can_show_raw_bitmap_bits()
-    test_c_input_cli_writes_scaled_human_preview()
-    test_preview_all_lpm_c_arrays_cli_scans_c_arrays_only()
+    raise SystemExit(pytest.main([__file__]))

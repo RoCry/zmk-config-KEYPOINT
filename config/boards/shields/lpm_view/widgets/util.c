@@ -5,23 +5,28 @@
  *
  */
 
-#include <zephyr/kernel.h>
+#include <string.h>
 #include "util.h"
+#include "theme.h"
 
 LV_IMG_DECLARE(bolt);
 
 void rotate_canvas(lv_obj_t *canvas, lv_color_t cbuf[]) {
-    static lv_color_t cbuf_tmp[CANVAS_SIZE * CANVAS_SIZE];
-    memcpy(cbuf_tmp, cbuf, sizeof(cbuf_tmp));
-    lv_img_dsc_t img;
-    img.data = (void *)cbuf_tmp;
-    img.header.cf = LV_IMG_CF_TRUE_COLOR;
-    img.header.w = CANVAS_SIZE;
-    img.header.h = CANVAS_SIZE;
-
-    lv_canvas_fill_bg(canvas, LVGL_BACKGROUND, LV_OPA_COVER);
-    lv_canvas_transform(canvas, &img,	-900, LV_IMG_ZOOM_NONE,	0, 0, CANVAS_SIZE / 2,
-                        CANVAS_SIZE / 2-1, false);
+    /* Exact quarter turn in place. LVGL 8.3's general transform both resamples
+     * right-angle rotations and dereferences a refreshing display outside a
+     * refresh callback. Integer permutation avoids both and needs no scratch. */
+    for (int first = 0; first < CANVAS_SIZE / 2; ++first) {
+        int last = CANVAS_SIZE - 1 - first;
+        for (int i = first; i < last; ++i) {
+            int opposite = last - (i - first);
+            lv_color_t top = cbuf[first * CANVAS_SIZE + i];
+            cbuf[first * CANVAS_SIZE + i] = cbuf[i * CANVAS_SIZE + last];
+            cbuf[i * CANVAS_SIZE + last] = cbuf[last * CANVAS_SIZE + opposite];
+            cbuf[last * CANVAS_SIZE + opposite] = cbuf[opposite * CANVAS_SIZE + first];
+            cbuf[opposite * CANVAS_SIZE + first] = top;
+        }
+    }
+    lv_obj_invalidate(canvas);
 }
 
 void draw_battery(lv_obj_t *canvas, const struct status_state *state) {
@@ -32,7 +37,11 @@ void draw_battery(lv_obj_t *canvas, const struct status_state *state) {
 
     lv_canvas_draw_rect(canvas, 0, 2, 29, 12, &rect_white_dsc);
     lv_canvas_draw_rect(canvas, 1, 3, 27, 10, &rect_black_dsc);
-    lv_canvas_draw_rect(canvas, 2, 4, (state->battery + 2) / 4, 8, &rect_white_dsc);
+    lv_draw_rect_dsc_t fill;
+    enum keypoint_color color = state->charging ? KP_CYAN :
+        state->battery <= 10 ? KP_RED : state->battery <= 20 ? KP_YELLOW : KP_GREEN;
+    init_rect_dsc(&fill, keypoint_color(color));
+    lv_canvas_draw_rect(canvas, 2, 4, (state->battery + 2) / 4, 8, &fill);
     lv_canvas_draw_rect(canvas, 30, 5, 3, 6, &rect_white_dsc);
     lv_canvas_draw_rect(canvas, 31, 6, 1, 4, &rect_black_dsc);
 
